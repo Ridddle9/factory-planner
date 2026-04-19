@@ -1,0 +1,147 @@
+// Factory Planner — схема данных
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// --- Авторизация ---
+
+model Company {
+  id        String   @id @default(cuid())
+  inn       String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  users User[]
+}
+
+// role: ADMIN | MEMBER
+// status: PENDING | APPROVED | REJECTED
+model User {
+  id           String   @id @default(cuid())
+  email        String
+  passwordHash String
+  role         String   @default("MEMBER")
+  status       String   @default("PENDING")
+  companyId    String
+  createdAt    DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([email, companyId])
+}
+
+// --- Справочники ---
+
+model Workshop {
+  id   String @id @default(cuid())
+  name String @unique // Участок сборки светильников и корпусов IP
+
+  categories ProductCategory[]
+}
+
+model ProductCategory {
+  id                    String   @id @default(cuid())
+  name                  String   @unique // СВЕТИЛЬНИКИ LUM (380 max)
+  capacityPerTeamPerDay Int      // Мощность на бригаду/день (220, 600...)
+  workshopId            String
+  workshop              Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+
+  teams    CategoryTeam[]
+  products Product[]
+}
+
+model Team {
+  id   String @id @default(cuid())
+  name String @unique // Бригада №4 сборки светильников
+
+  categories    CategoryTeam[]
+  dailyTasks    DailyTask[]
+  dayCapacities TeamDayCapacity[]
+}
+
+// Корректировка мощности бригады на конкретный день
+model TeamDayCapacity {
+  id     String   @id @default(cuid())
+  teamId String
+  date   DateTime
+  factor Float    // 0.0–1.0, где 1.0 = полная мощность
+  note   String?  // Причина: "Вышло 6 из 10 человек"
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, date])
+}
+
+// Связь категория ↔ бригада (many-to-many)
+model CategoryTeam {
+  categoryId String
+  teamId     String
+  category   ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  team       Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([categoryId, teamId])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  code        String   @unique // ЦБ-00010359
+  name        String   // Корпус светильника CSVT ЛПO...
+  categoryId  String
+  category    ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  orderItems OrderItem[]
+}
+
+// --- Заказы ---
+
+model Order {
+  id            String   @id @default(cuid())
+  orderNumber   String   @unique // 00ЦБ-001213
+  customer      String   // ТД ЭЛЕКТРОТЕХМОНТАЖ, АО
+  description   String?  // Заказ клиента 00ЦБ-001213 от...
+  dueDate       DateTime? // Дата ограничения (жёсткий срок)
+  manager       String?  // _ФСК ЭТМ
+  paymentTerms  String?  // Рассрочка 60 к.дней
+  approvedAt    DateTime? // Дата согласования
+  replanCount   Int       @default(0) // Сколько раз перепланировался
+
+  items OrderItem[]
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  productId   String
+  quantity    Int      // Всего к производству
+  groupNumber Int?     // Номер группы (для маппинга на бригады)
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  dailyTasks DailyTask[]
+
+  // «К обеспечению» = quantity - SUM(dailyTasks.actualQuantity) — вычисляется
+}
+
+// --- План и факт ---
+
+model DailyTask {
+  id               String   @id @default(cuid())
+  orderItemId      String
+  teamId           String?
+  date             DateTime // День (дата без времени)
+  plannedQuantity  Int      @default(0) // План на день
+  actualQuantity   Int?     // Факт (вводит начальник цеха)
+  comment          String?  // Почему больше/меньше плана
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  team      Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@unique([orderItemId, date])
+}
