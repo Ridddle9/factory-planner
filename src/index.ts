@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
 import path from "path";
+import { randomUUID } from "crypto";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -17,7 +18,8 @@ const JWT_SECRET = process.env["JWT_SECRET"] ?? "dev-secret-change-in-production
 const PORT = parseInt(process.env["PORT"] ?? "3000", 10);
 const IS_PROD = process.env["NODE_ENV"] === "production";
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
 // В продакшене фронтенд делает запросы на /api/..., стрипаем префикс
@@ -74,8 +76,8 @@ function issueToken(res: Response, userId: string) {
   const token = jwt.sign({ userId }, JWT_SECRET, { expiresIn: "30d" });
   res.cookie("token", token, {
     httpOnly: true,
-    secure: IS_PROD,
-    sameSite: "strict",
+    secure: false,
+    sameSite: "lax",
     maxAge: 30 * 24 * 60 * 60 * 1000,
   });
 }
@@ -101,7 +103,7 @@ app.post("/auth/register", async (req: Request, res: Response) => {
   const isFirstUser = !company;
 
   if (!company) {
-    company = await prisma.company.create({ data: { inn: innClean, name: companyName.trim() } });
+    company = await prisma.company.create({ data: { inn: innClean, name: companyName.trim(), syncToken: randomUUID() } });
   }
 
   // Проверить дубль email в этой компании
@@ -197,6 +199,33 @@ app.get("/admin/users/pending", requireAuth, requireAdmin, async (req: Request, 
   res.json(users);
 });
 
+app.get("/admin/users", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const users = await prisma.user.findMany({
+    where: { companyId: req.user!.companyId },
+    select: { id: true, email: true, role: true, status: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+  res.json(users);
+});
+
+app.get("/admin/sync-token", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const company = await prisma.company.findUnique({
+    where: { id: req.user!.companyId },
+    select: { syncToken: true },
+  });
+  res.json({ syncToken: company?.syncToken ?? null });
+});
+
+app.post("/admin/sync-token/regenerate", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const { randomUUID } = await import("crypto");
+  const syncToken = randomUUID();
+  await prisma.company.update({
+    where: { id: req.user!.companyId },
+    data: { syncToken },
+  });
+  res.json({ syncToken });
+});
+
 app.patch("/admin/users/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const { status } = req.body as { status?: string };
   if (status !== "APPROVED" && status !== "REJECTED") {
@@ -236,6 +265,14 @@ function isWorkingDay(date: Date): boolean {
   return !RUSSIAN_HOLIDAYS.some(h => h.month === m && h.day === d);
 }
 
+function getNextWorkingDay(date: Date): Date {
+  const next = new Date(date);
+  do {
+    next.setDate(next.getDate() + 1);
+  } while (!isWorkingDay(next));
+  return next;
+}
+
 // Helper: возвращает «К обеспечению» для позиции заказа.
 // orderItem.quantity хранит последнее значение «К обеспечению» из ERP (не исходный итог заказа).
 // Вычитать уже записанные факты нельзя — они уже учтены в K на момент предыдущего импорта.
@@ -248,7 +285,7 @@ async function calculateRemainingQuantity(orderItemId: string): Promise<number> 
 }
 
 // Helper: вычислить загрузку бригады на дату в долях бригадо-дня (0.0–1.0+)
-// load = Σ(plannedQuantity / capacityPerTeamPerDay) по всем задачам
+// load = Σ(plannedQuantity / capacityPerDay) по всем задачам
 async function calculateTeamLoad(teamId: string, date: Date): Promise<number> {
   const tasks = await prisma.dailyTask.findMany({
     where: { teamId, date },
@@ -258,6 +295,7 @@ async function calculateTeamLoad(teamId: string, date: Date): Promise<number> {
         select: {
           product: {
             select: {
+              capacityPerDay: true,
               category: { select: { capacityPerTeamPerDay: true } },
             },
           },
@@ -267,15 +305,16 @@ async function calculateTeamLoad(teamId: string, date: Date): Promise<number> {
   });
 
   return tasks.reduce((sum, task) => {
-    const cap = task.orderItem.product.category.capacityPerTeamPerDay;
+    const cap = task.orderItem.product.capacityPerDay
+      ?? task.orderItem.product.category.capacityPerTeamPerDay;
     return sum + (cap > 0 ? task.plannedQuantity / cap : 0);
   }, 0);
 }
 
 // Helper: получить доступные бригады для категории
-async function getAvailableTeamsForCategory(categoryId: string): Promise<string[]> {
+async function getAvailableTeamsForCategory(categoryId: string, companyId: string): Promise<string[]> {
   const links = await prisma.categoryTeam.findMany({
-    where: { categoryId },
+    where: { categoryId, team: { companyId } },
     select: { teamId: true },
   });
 
@@ -305,10 +344,246 @@ async function selectTeamWithMinLoad(
   return loads[0]?.teamId || null;
 }
 
+// Helper: сжать план позиции заказа влево (после ручного переноса на позднюю дату)
+async function compactOrderItem(orderItemId: string, preserveDate?: Date): Promise<void> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // If the user manually placed a task on preserveDate, keep it untouched
+  let preservedQty = 0;
+  if (preserveDate) {
+    const preserved = await prisma.dailyTask.findUnique({
+      where: { orderItemId_date: { orderItemId, date: preserveDate } },
+      select: { plannedQuantity: true },
+    });
+    preservedQty = preserved?.plannedQuantity ?? 0;
+
+    await prisma.dailyTask.deleteMany({
+      where: {
+        orderItemId,
+        date: { gte: today, not: preserveDate },
+        actualQuantity: null,
+      },
+    });
+  } else {
+    await prisma.dailyTask.deleteMany({
+      where: { orderItemId, date: { gte: today }, actualQuantity: null },
+    });
+  }
+
+  try {
+    const planOpts: { startDate: Date; skipDates?: Date[]; reservedQty?: number } = {
+      startDate: today,
+      reservedQty: preservedQty,
+    };
+    if (preserveDate) planOpts.skipDates = [preserveDate];
+    await autoPlanOrderItem(orderItemId, planOpts);
+  } catch {
+    // нет бригады / категории — оставляем незапланированным
+  }
+}
+
+// Helper: каскадный сдвиг вправо (после ручного переноса на раннюю дату)
+async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations = 60): Promise<number> {
+  let movedCount = 0;
+
+  const processDay = async (date: Date, iteration: number): Promise<void> => {
+    if (iteration > maxIterations) return;
+
+    const capOverride = await prisma.teamDayCapacity.findUnique({
+      where: { teamId_date: { teamId, date } },
+    });
+    const effectiveFactor = capOverride?.factor ?? 1.0;
+
+    const tasks = await prisma.dailyTask.findMany({
+      where: { teamId, date, actualQuantity: null },
+      include: {
+        orderItem: {
+          include: {
+            product: { include: { category: true } },
+            order: { select: { approvedAt: true } },
+          },
+        },
+      },
+    });
+    if (tasks.length === 0) return;
+
+    let totalLoad = 0;
+    for (const t of tasks) {
+      const cap = t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay;
+      totalLoad += cap > 0 ? t.plannedQuantity / cap : 0;
+    }
+    if (totalLoad <= effectiveFactor + 0.0001) return;
+
+    // Only shift auto-planned tasks; manually placed ones stay put
+    const shiftable = tasks.filter(t => !t.manuallyPlaced);
+    if (shiftable.length === 0) return;
+
+    // Lowest priority first: latest approvedAt gets moved first
+    const sorted = [...shiftable].sort((a, b) => {
+      const ta = a.orderItem.order.approvedAt?.getTime() ?? 0;
+      const tb = b.orderItem.order.approvedAt?.getTime() ?? 0;
+      return tb - ta;
+    });
+
+    let excessLoad = totalLoad - effectiveFactor;
+    const nextDay = getNextWorkingDay(date);
+
+    for (const task of sorted) {
+      if (excessLoad <= 0.0001) break;
+      const cap = task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay;
+      const taskLoad = cap > 0 ? task.plannedQuantity / cap : 0;
+
+      let moveQty: number;
+      if (taskLoad <= excessLoad + 0.0001) {
+        // Move entire task
+        moveQty = task.plannedQuantity;
+        excessLoad -= taskLoad;
+        await prisma.dailyTask.delete({ where: { id: task.id } });
+      } else {
+        // Move partial (just the excess)
+        moveQty = Math.ceil(excessLoad * cap);
+        excessLoad = 0;
+        await prisma.dailyTask.update({
+          where: { id: task.id },
+          data: { plannedQuantity: task.plannedQuantity - moveQty },
+        });
+      }
+
+      movedCount++;
+      const existing = await prisma.dailyTask.findUnique({
+        where: { orderItemId_date: { orderItemId: task.orderItemId, date: nextDay } },
+      });
+      if (existing) {
+        await prisma.dailyTask.update({
+          where: { id: existing.id },
+          data: { plannedQuantity: existing.plannedQuantity + moveQty },
+        });
+      } else {
+        await prisma.dailyTask.create({
+          data: {
+            orderItemId: task.orderItemId,
+            teamId: task.teamId,
+            date: nextDay,
+            plannedQuantity: moveQty,
+          },
+        });
+      }
+    }
+
+    await processDay(nextDay, iteration + 1);
+  };
+
+  await processDay(startDate, 0);
+  return movedCount;
+}
+
+// Helper: каскадный сдвиг влево (после ручного переноса на позднюю дату — подтягивает очередь вперёд)
+async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations = 60): Promise<number> {
+  let movedCount = 0;
+
+  const processDay = async (date: Date, iteration: number): Promise<void> => {
+    if (iteration > maxIterations) return;
+    if (!isWorkingDay(date)) {
+      await processDay(getNextWorkingDay(date), iteration + 1);
+      return;
+    }
+
+    const capOverride = await prisma.teamDayCapacity.findUnique({
+      where: { teamId_date: { teamId, date } },
+    });
+    const effectiveFactor = capOverride?.factor ?? 1.0;
+
+    const currentTasks = await prisma.dailyTask.findMany({
+      where: { teamId, date, actualQuantity: null },
+      include: { orderItem: { include: { product: { include: { category: true } } } } },
+    });
+
+    let currentLoad = 0;
+    for (const t of currentTasks) {
+      const cap = t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay;
+      currentLoad += cap > 0 ? t.plannedQuantity / cap : 0;
+    }
+
+    // Day is full — nothing to pull into, but continue forward in case we created a gap earlier
+    if (currentLoad >= effectiveFactor - 0.0001) return;
+
+    const nextDay = getNextWorkingDay(date);
+    const nextDayTasks = await prisma.dailyTask.findMany({
+      where: { teamId, date: nextDay, actualQuantity: null, manuallyPlaced: false },
+      include: {
+        orderItem: {
+          include: {
+            product: { include: { category: true } },
+            order: { select: { approvedAt: true } },
+          },
+        },
+      },
+    });
+
+    if (nextDayTasks.length === 0) {
+      // Nothing to pull from nextDay — look further
+      await processDay(nextDay, iteration + 1);
+      return;
+    }
+
+    // FIFO: earliest approvedAt fills the gap first
+    const sorted = [...nextDayTasks].sort((a, b) => {
+      const ta = a.orderItem.order.approvedAt?.getTime() ?? 0;
+      const tb = b.orderItem.order.approvedAt?.getTime() ?? 0;
+      return ta - tb;
+    });
+
+    let freeLoad = effectiveFactor - currentLoad;
+
+    for (const task of sorted) {
+      if (freeLoad <= 0.0001) break;
+      const cap = task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay;
+      const taskLoad = cap > 0 ? task.plannedQuantity / cap : 0;
+
+      let pullQty: number;
+      if (taskLoad <= freeLoad + 0.0001) {
+        pullQty = task.plannedQuantity;
+        freeLoad -= taskLoad;
+        await prisma.dailyTask.delete({ where: { id: task.id } });
+      } else {
+        pullQty = Math.floor(freeLoad * cap);
+        if (pullQty <= 0) break;
+        freeLoad = 0;
+        await prisma.dailyTask.update({
+          where: { id: task.id },
+          data: { plannedQuantity: task.plannedQuantity - pullQty },
+        });
+      }
+
+      movedCount++;
+      const existing = await prisma.dailyTask.findUnique({
+        where: { orderItemId_date: { orderItemId: task.orderItemId, date } },
+      });
+      if (existing) {
+        await prisma.dailyTask.update({
+          where: { id: existing.id },
+          data: { plannedQuantity: existing.plannedQuantity + pullQty },
+        });
+      } else {
+        await prisma.dailyTask.create({
+          data: { orderItemId: task.orderItemId, teamId: task.teamId, date, plannedQuantity: pullQty },
+        });
+      }
+    }
+
+    // nextDay may now have a gap from what we pulled — process it
+    await processDay(nextDay, iteration + 1);
+  };
+
+  await processDay(startDate, 0);
+  return movedCount;
+}
+
 // Helper: автопланирование позиции заказа
 async function autoPlanOrderItem(
   orderItemId: string,
-  options?: { startDate?: Date; preferredTeamId?: string }
+  options?: { startDate?: Date; preferredTeamId?: string; skipDates?: Date[]; reservedQty?: number }
 ): Promise<{ tasks: any[]; overloaded: boolean }> {
   const orderItem = await prisma.orderItem.findUnique({
     where: { id: orderItemId },
@@ -323,11 +598,12 @@ async function autoPlanOrderItem(
   }
 
   const { quantity } = orderItem;
-  const { capacityPerTeamPerDay } = orderItem.product.category;
+  const capacityPerTeamPerDay = orderItem.product.capacityPerDay
+    ?? orderItem.product.category.capacityPerTeamPerDay;
   const dueDate = orderItem.order.dueDate; // may be null
 
   // Получаем доступные бригады для категории
-  const availableTeamIds = await getAvailableTeamsForCategory(orderItem.product.categoryId);
+  const availableTeamIds = await getAvailableTeamsForCategory(orderItem.product.categoryId, orderItem.order.companyId);
 
   if (availableTeamIds.length === 0) {
     throw new Error("No teams available for this product category");
@@ -342,12 +618,13 @@ async function autoPlanOrderItem(
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0);
 
-    // Если dueDate есть и раньше завтра — начинаем с dueDate, иначе с завтра
-    currentDate = (dueDate && dueDate < tomorrow) ? new Date(dueDate) : tomorrow;
+    currentDate = tomorrow;
   }
 
+  const skipDateMs = new Set((options?.skipDates ?? []).map(d => d.getTime()));
+
   const tasks: any[] = [];
-  let remaining = quantity;
+  let remaining = Math.max(0, quantity - (options?.reservedQty ?? 0));
   let overloaded = false;
 
   // Планируем от текущей даты до dueDate (или дальше, если перегрузка)
@@ -355,12 +632,37 @@ async function autoPlanOrderItem(
   let daysPlanned = 0;
 
   while (remaining > 0 && daysPlanned < maxDays) {
-    const dateStr = currentDate.toISOString().split("T")[0];
-    if (!dateStr) break;
+    // Используем локальные компоненты даты, чтобы избежать сдвига UTC+ (напр. Москва UTC+3)
+    const y = currentDate.getFullYear();
+    const mo = String(currentDate.getMonth() + 1).padStart(2, "0");
+    const d = String(currentDate.getDate()).padStart(2, "0");
+    const dateStr = `${y}-${mo}-${d}`;
     const date = new Date(dateStr);
+
+    // Пропускаем даты, которые были вручную поставлены пользователем
+    if (skipDateMs.has(date.getTime())) {
+      currentDate.setDate(currentDate.getDate() + 1);
+      daysPlanned++;
+      continue;
+    }
 
     // Пропускаем выходные и российские праздники
     if (!isWorkingDay(date)) {
+      currentDate.setDate(currentDate.getDate() + 1);
+      daysPlanned++;
+      continue;
+    }
+
+    // Пропускаем даты, заблокированные для этой категории
+    const categoryBlock = await prisma.categoryBlock.findFirst({
+      where: {
+        categoryId: orderItem.product.categoryId,
+        companyId: orderItem.order.companyId,
+        startDate: { lte: date },
+        endDate: { gte: date },
+      },
+    });
+    if (categoryBlock) {
       currentDate.setDate(currentDate.getDate() + 1);
       daysPlanned++;
       continue;
@@ -388,7 +690,7 @@ async function autoPlanOrderItem(
     const effectiveFraction = capOverride ? capOverride.factor : 1.0;
     // Свободная ёмкость в штуках для текущей категории
     const availableFraction = Math.max(0, effectiveFraction - currentLoadFraction);
-    const available = Math.floor(availableFraction * capacityPerTeamPerDay);
+    const available = Math.round(availableFraction * capacityPerTeamPerDay);
 
     // Планируем на этот день
     const plannedForDay = Math.min(remaining, available);
@@ -471,19 +773,478 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
 
+// ─── Синхронизация с 1С (без JWT, своя авторизация) ─────────────────────────
+
+function parseCapacity(name: string): number {
+  const m = name.match(/(\d+)\s*max|max\s*(\d+)/i);
+  if (!m) return 220;
+  return parseInt((m[1] ?? m[2])!, 10);
+}
+
+app.post("/sync/1c", async (req: Request, res: Response) => {
+  const authHeader = req.headers["authorization"] as string | undefined;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized" }); return;
+  }
+  const syncToken = authHeader.slice(7);
+  const syncCompany = await prisma.company.findUnique({ where: { syncToken } });
+  if (!syncCompany) {
+    res.status(401).json({ error: "Unauthorized" }); return;
+  }
+  const companyId = syncCompany.id;
+
+  const { orders, categories, teams, teamCategories, fact, capacity } = req.body as {
+    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; dueDate?: string; approvedAt?: string; description?: string; paymentTerms?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number }[] }[];
+    categories: { code: string; name: string; capacity?: number }[];
+    teams: { code: string; name: string; workshopName?: string }[];
+    teamCategories: { categoryName: string; teamName: string; workshopName?: string }[];
+    fact: { orderNumber: string; productCode: string; totalProduced: number }[];
+    capacity?: { productCode: string; capacityPerDay: number }[];
+  };
+
+  const stats = { categories: 0, teams: 0, products: 0, orders: 0, orderItems: 0, categoryTeamLinks: 0, factRecords: 0, capacityRecords: 0 };
+  const factSkipped = { noOrder: 0, noProduct: 0, noOrderItem: 0 };
+
+  console.log("[sync/1c] received:", {
+    orders: orders?.length ?? 0,
+    categories: categories?.length ?? 0,
+    teams: teams?.length ?? 0,
+    teamCategories: teamCategories?.length ?? 0,
+    fact: fact?.length ?? 0,
+    capacity: capacity?.length ?? 0,
+    sampleTeams: teams?.slice(0, 5).map(t => t.name),
+    orderNumbers: orders?.map(o => o.number),
+  });
+  // Полный дамп тела запроса — для отладки структуры данных от 1С
+  console.log("[sync/1c] raw body:", JSON.stringify(req.body, null, 2));
+
+  let defaultWorkshop = await prisma.workshop.findFirst({ where: { name: "1С", companyId } });
+  if (!defaultWorkshop) {
+    defaultWorkshop = await prisma.workshop.create({ data: { name: "1С", companyId } });
+  }
+
+  const categoryMap = new Map<string, string>();
+  for (const cat of (categories ?? [])) {
+    const capValue = cat.capacity ?? parseCapacity(cat.name);
+    const existing = await prisma.productCategory.findUnique({ where: { name_companyId: { name: cat.name, companyId } } });
+    if (existing) {
+      if (existing.capacityPerTeamPerDay !== capValue) {
+        await prisma.productCategory.update({ where: { id: existing.id }, data: { capacityPerTeamPerDay: capValue } });
+      }
+      categoryMap.set(cat.name, existing.id);
+    } else {
+      const created = await prisma.productCategory.create({
+        data: { name: cat.name, capacityPerTeamPerDay: capValue, workshopId: defaultWorkshop.id, companyId },
+      });
+      categoryMap.set(cat.name, created.id);
+      stats.categories++;
+    }
+  }
+
+  // Создаём участки из workshopName бригад
+  const workshopMap = new Map<string, string>();
+  workshopMap.set("1С", defaultWorkshop.id);
+  for (const t of (teams ?? [])) {
+    const wName = t.workshopName?.trim();
+    if (!wName || workshopMap.has(wName)) continue;
+    const ws = await prisma.workshop.upsert({
+      where: { name_companyId: { name: wName, companyId } },
+      update: {},
+      create: { name: wName, companyId },
+    });
+    workshopMap.set(wName, ws.id);
+  }
+
+  // Если бригады не пришли отдельно — извлекаем уникальные имена из teamCategories
+  const teamsToProcess = (teams && teams.length > 0)
+    ? teams
+    : [...new Set((teamCategories ?? []).map(tc => tc.teamName).filter(Boolean))].map(n => ({ code: n, name: n }));
+
+  // teamName → workshopId (для обновления workshopId категорий)
+  const teamWorkshopMap = new Map<string, string>();
+  for (const t of teamsToProcess) {
+    const wName = (t as { workshopName?: string }).workshopName?.trim();
+    if (wName && workshopMap.has(wName)) {
+      teamWorkshopMap.set(t.name, workshopMap.get(wName)!);
+    }
+  }
+
+  const teamMap = new Map<string, string>();
+  for (const t of teamsToProcess) {
+    const upserted = await prisma.team.upsert({
+      where: { name_companyId: { name: t.name, companyId } },
+      update: {},
+      create: { name: t.name, companyId },
+    });
+    teamMap.set(t.name, upserted.id);
+    stats.teams++;
+  }
+
+  const ACTIVE_STATUSES = new Set(['КОбеспечению', 'КОтгрузке']);
+
+  // Деактивировать заказы которых нет в текущем синке
+  const incomingOrderRefs = new Set((orders ?? []).filter(o => o.ref).map(o => o.ref as string));
+  const incomingOrderNumbers = new Set((orders ?? []).map(o => o.number));
+  if (incomingOrderRefs.size > 0) {
+    await prisma.order.updateMany({
+      where: { companyId, active: true, orderRef: { notIn: Array.from(incomingOrderRefs) } },
+      data: { active: false },
+    });
+  } else if (incomingOrderNumbers.size > 0) {
+    await prisma.order.updateMany({
+      where: { companyId, active: true, orderNumber: { notIn: Array.from(incomingOrderNumbers) } },
+      data: { active: false },
+    });
+  }
+
+  for (const orderData of (orders ?? [])) {
+    const isActive = !orderData.status || ACTIVE_STATUSES.has(orderData.status);
+    const ref = orderData.ref as string | undefined;
+
+    const orderFields = {
+      orderNumber: orderData.number,
+      customer: orderData.customer,
+      manager: orderData.manager ?? null,
+      dueDate: orderData.dueDate ? new Date(orderData.dueDate) : null,
+      approvedAt: orderData.approvedAt ? new Date(orderData.approvedAt) : null,
+      description: orderData.description ?? null,
+      paymentTerms: orderData.paymentTerms ?? null,
+      active: isActive,
+    };
+
+    const existing = ref
+      ? await prisma.order.findFirst({ where: { orderRef: ref, companyId } })
+      : await prisma.order.findFirst({ where: { orderNumber: orderData.number, companyId } });
+
+    const order = existing
+      ? await prisma.order.update({ where: { id: existing.id }, data: orderFields })
+      : await prisma.order.create({ data: { ...orderFields, orderRef: ref ?? null, companyId } });
+    stats.orders++;
+
+    const syncedProductIds: string[] = [];
+
+    for (const itemData of (orderData.items ?? [])) {
+      let categoryId = categoryMap.get(itemData.categoryName);
+      if (!categoryId) {
+        const capacity = parseCapacity(itemData.categoryName);
+        const cat = await prisma.productCategory.upsert({
+          where: { name_companyId: { name: itemData.categoryName, companyId } },
+          update: {},
+          create: { name: itemData.categoryName, capacityPerTeamPerDay: capacity, workshopId: defaultWorkshop.id, companyId },
+        });
+        categoryId = cat.id;
+        categoryMap.set(itemData.categoryName, categoryId);
+      }
+
+      const product = await prisma.product.upsert({
+        where: { code_companyId: { code: itemData.productCode, companyId } },
+        update: { name: itemData.productName, categoryId },
+        create: { code: itemData.productCode, name: itemData.productName, categoryId, companyId },
+      });
+      stats.products++;
+      syncedProductIds.push(product.id);
+
+      const existingItem = await prisma.orderItem.findFirst({
+        where: { orderId: order.id, productId: product.id },
+      });
+      if (existingItem) {
+        await prisma.orderItem.update({ where: { id: existingItem.id }, data: { quantity: itemData.quantity } });
+      } else {
+        await prisma.orderItem.create({ data: { orderId: order.id, productId: product.id, quantity: itemData.quantity } });
+      }
+      stats.orderItems++;
+    }
+
+    // Удаляем позиции которые BSL больше не присылает (например, стали СоСклада)
+    await prisma.orderItem.deleteMany({
+      where: { orderId: order.id, productId: { notIn: syncedProductIds } },
+    });
+  }
+
+  await prisma.categoryTeam.deleteMany({ where: { category: { companyId } } });
+
+  const seenLinks = new Set<string>();
+  for (const tc of (teamCategories ?? [])) {
+    const categoryId = categoryMap.get(tc.categoryName);
+    if (!categoryId) continue;
+
+    const teamId = teamMap.get(tc.teamName);
+    if (!teamId) continue;
+
+    const key = `${categoryId}|${teamId}`;
+    if (seenLinks.has(key)) continue;
+    seenLinks.add(key);
+
+    await prisma.categoryTeam.upsert({
+      where: { categoryId_teamId: { categoryId, teamId } },
+      update: {},
+      create: { categoryId, teamId },
+    });
+    stats.categoryTeamLinks++;
+
+    // Обновляем workshopId категории если она всё ещё на дефолтном "1С"
+    const wsId = teamWorkshopMap.get(tc.teamName);
+    if (wsId && wsId !== defaultWorkshop.id) {
+      await prisma.productCategory.updateMany({
+        where: { id: categoryId, workshopId: defaultWorkshop.id },
+        data: { workshopId: wsId },
+      });
+    }
+  }
+
+  const todayMs = (() => {
+    // Use Moscow time (UTC+3) to determine the current calendar date
+    const msk = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    msk.setUTCHours(0, 0, 0, 0);
+    return msk.getTime();
+  })();
+
+  for (const factEntry of (fact ?? [])) {
+    const { orderNumber, productCode, totalProduced } = factEntry;
+    if (!orderNumber || !productCode || totalProduced == null) continue;
+
+    const order = await prisma.order.findFirst({ where: { orderNumber, companyId, active: true } });
+    if (!order) { factSkipped.noOrder++; continue; }
+
+    const product = await prisma.product.findUnique({ where: { code_companyId: { code: productCode, companyId } } });
+    if (!product) { factSkipped.noProduct++; continue; }
+
+    const orderItem = await prisma.orderItem.findFirst({ where: { orderId: order.id, productId: product.id } });
+    if (!orderItem) { factSkipped.noOrderItem++; continue; }
+
+    // Cumulative total from 1C; compute today's delta = totalProduced - sum of all previous days
+    const prevResult = await prisma.dailyTask.aggregate({
+      where: { orderItemId: orderItem.id, date: { lt: new Date(todayMs) } },
+      _sum: { actualQuantity: true },
+    });
+    const previousTotal = prevResult._sum.actualQuantity ?? 0;
+    const todayDelta = Math.max(0, Number(totalProduced) - previousTotal);
+
+    await prisma.dailyTask.upsert({
+      where: { orderItemId_date: { orderItemId: orderItem.id, date: new Date(todayMs) } },
+      update: { actualQuantity: todayDelta },
+      create: { orderItemId: orderItem.id, date: new Date(todayMs), plannedQuantity: 0, actualQuantity: todayDelta },
+    });
+    stats.factRecords++;
+  }
+
+  for (const cap of (capacity ?? [])) {
+    const updated = await prisma.product.updateMany({
+      where: { code: cap.productCode, companyId, capacityLocked: false },
+      data: { capacityPerDay: cap.capacityPerDay },
+    });
+    stats.capacityRecords += updated.count;
+  }
+
+  const skippedTotal = factSkipped.noOrder + factSkipped.noProduct + factSkipped.noOrderItem;
+  if (skippedTotal > 0) {
+    console.log(`[sync/1c] fact skipped ${skippedTotal}: noOrder=${factSkipped.noOrder} noProduct=${factSkipped.noProduct} noOrderItem=${factSkipped.noOrderItem}`);
+  }
+  res.json({ ok: true, stats, factSkipped });
+});
+
+// Продакшн: статические файлы фронтенда (до auth, чтобы /index.html не требовал авторизации)
+if (IS_PROD) {
+  const frontendDist = path.join(__dirname, "../frontend/dist");
+  app.use(express.static(frontendDist));
+}
+
 // Все роуты ниже требуют авторизации
 app.use(requireAuth);
 
+// --- Onboarding seed ---
+
+app.post("/onboarding/seed", requireAdmin, async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+
+  // Idempotency check
+  const existingWorkshop = await prisma.workshop.findFirst({ where: { companyId: cid } });
+  if (existingWorkshop) {
+    return res.json({ ok: true, skipped: true });
+  }
+
+  // Workshop
+  const workshop = await prisma.workshop.create({
+    data: { name: "Цех сборки", companyId: cid },
+  });
+
+  // Category
+  const category = await prisma.productCategory.create({
+    data: {
+      name: "СВЕТИЛЬНИКИ FLORA",
+      capacityPerTeamPerDay: 150,
+      workshopId: workshop.id,
+      companyId: cid,
+    },
+  });
+
+  // Team
+  const team = await prisma.team.create({
+    data: { name: "Бригада № 1", companyId: cid },
+  });
+
+  // CategoryTeam link
+  await prisma.categoryTeam.create({
+    data: { categoryId: category.id, teamId: team.id },
+  });
+
+  // Products
+  const p1 = await prisma.product.create({
+    data: { code: "FLORA-01", name: "Светильник FLORA 500×500", categoryId: category.id, companyId: cid },
+  });
+  const p2 = await prisma.product.create({
+    data: { code: "FLORA-02", name: "Светильник FLORA 300×300", categoryId: category.id, companyId: cid },
+  });
+
+  // Orders
+  const now = new Date();
+  const due1 = new Date(now);
+  due1.setDate(due1.getDate() + 10);
+  const due2 = new Date(now);
+  due2.setDate(due2.getDate() + 17);
+
+  const order1 = await prisma.order.create({
+    data: {
+      orderNumber: "ЗК-001",
+      customer: "ООО «Ромашка»",
+      manager: "Иванов А.А.",
+      dueDate: due1,
+      companyId: cid,
+    },
+  });
+  const order2 = await prisma.order.create({
+    data: {
+      orderNumber: "ЗК-002",
+      customer: "ООО «Орион»",
+      manager: "Петрова И.В.",
+      dueDate: due2,
+      companyId: cid,
+    },
+  });
+
+  // OrderItems
+  const item1 = await prisma.orderItem.create({
+    data: { orderId: order1.id, productId: p1.id, quantity: 450 },
+  });
+  const item2 = await prisma.orderItem.create({
+    data: { orderId: order2.id, productId: p2.id, quantity: 300 },
+  });
+
+  // Helper: advance a YYYY-MM-DD string to the next Mon–Fri day
+  function nextWorkingDay(dateStr: string): string {
+    const d = new Date(dateStr + "T00:00:00.000Z");
+    d.setUTCDate(d.getUTCDate() + 1);
+    while (d.getUTCDay() === 0 || d.getUTCDay() === 6) {
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return d.toISOString().slice(0, 10);
+  }
+
+  // Start from today; if weekend, advance to Monday
+  function todayWorkingDateStr(): string {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    let dateStr = `${y}-${m}-${day}`;
+    const dt = new Date(dateStr + "T00:00:00.000Z");
+    while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6) {
+      dt.setUTCDate(dt.getUTCDate() + 1);
+      dateStr = dt.toISOString().slice(0, 10);
+    }
+    return dateStr;
+  }
+
+  const CAPACITY = 150;
+
+  // DailyTasks for item1: 450 qty → 3 days × 150
+  let currentDateStr = todayWorkingDateStr();
+  for (let i = 0; i < 3; i++) {
+    await prisma.dailyTask.create({
+      data: {
+        orderItem: { connect: { id: item1.id } },
+        team: { connect: { id: team.id } },
+        date: new Date(currentDateStr + "T00:00:00.000Z"),
+        plannedQuantity: CAPACITY,
+      },
+    });
+    currentDateStr = nextWorkingDay(currentDateStr);
+  }
+
+  // DailyTasks for item2: 300 qty → 2 days × 150, starting where item1 left off
+  for (let i = 0; i < 2; i++) {
+    await prisma.dailyTask.create({
+      data: {
+        orderItem: { connect: { id: item2.id } },
+        team: { connect: { id: team.id } },
+        date: new Date(currentDateStr + "T00:00:00.000Z"),
+        plannedQuantity: CAPACITY,
+      },
+    });
+    currentDateStr = nextWorkingDay(currentDateStr);
+  }
+
+  return res.json({ ok: true });
+});
+
+// --- Bulk plan unplanned items ---
+
+app.post("/order-items/plan-unplanned", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const items = await prisma.orderItem.findMany({
+    where: {
+      quantity: { gt: 0 },
+      order: { companyId: cid, active: true },
+      product: { category: { visible: true, workshop: { visible: true } } },
+    },
+    include: { dailyTasks: true, order: { select: { approvedAt: true, dueDate: true } } },
+    orderBy: { order: { approvedAt: "asc" } },
+  });
+
+  const unplanned = items.filter((item) => {
+    const done = item.dailyTasks.reduce((s, t) => s + (t.actualQuantity ?? 0), 0);
+    const K = item.quantity - done;
+    if (K <= 0) return false;
+    const futurePlanned = item.dailyTasks
+      .filter((t) => t.date >= today && t.actualQuantity === null)
+      .reduce((s, t) => s + t.plannedQuantity, 0);
+    return futurePlanned < K;
+  });
+
+  let planned = 0;
+  let skipped = 0;
+  let noTeam = 0;
+
+  for (const item of unplanned) {
+    try {
+      const { tasks } = await autoPlanOrderItem(item.id);
+      if (tasks.length > 0) planned++;
+      else skipped++;
+    } catch (err: any) {
+      if (err?.message?.includes("No teams available")) noTeam++;
+      else skipped++;
+    }
+  }
+
+  res.json({ total: unplanned.length, planned, skipped, noTeam });
+});
+
 // --- Workshops ---
 
-app.get("/workshops", async (_req: Request, res: Response) => {
+app.get("/workshops", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const workshops = await prisma.workshop.findMany({
+    where: { companyId: cid, visible: true },
     orderBy: { name: "asc" },
   });
   res.json(workshops);
 });
 
 app.post("/workshops", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const { name } = req.body;
 
   if (!name || typeof name !== "string") {
@@ -491,13 +1252,14 @@ app.post("/workshops", async (req: Request, res: Response) => {
   }
 
   const workshop = await prisma.workshop.create({
-    data: { name },
+    data: { name, companyId: cid },
   });
 
   res.status(201).json(workshop);
 });
 
 app.put("/workshops/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string;
   const { name } = req.body;
 
@@ -506,10 +1268,9 @@ app.put("/workshops/:id", async (req: Request, res: Response) => {
   }
 
   try {
-    const workshop = await prisma.workshop.update({
-      where: { id },
-      data: { name },
-    });
+    const existing = await prisma.workshop.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Workshop not found" }); return; }
+    const workshop = await prisma.workshop.update({ where: { id }, data: { name } });
     res.json(workshop);
   } catch (err) {
     res.status(404).json({ error: "Workshop not found" });
@@ -517,9 +1278,12 @@ app.put("/workshops/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/workshops/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string;
 
   try {
+    const existing = await prisma.workshop.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Workshop not found" }); return; }
     await prisma.workshop.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {
@@ -529,8 +1293,21 @@ app.delete("/workshops/:id", async (req: Request, res: Response) => {
 
 // --- Product Categories ---
 
-app.get("/categories", async (_req: Request, res: Response) => {
+app.get("/categories/no-team", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const categories = await prisma.productCategory.findMany({
+    where: { companyId: cid, visible: true, workshop: { visible: true } },
+    include: { workshop: true, teams: true },
+    orderBy: { name: "asc" },
+  });
+  const noTeam = categories.filter((c) => c.teams.length === 0);
+  res.json(noTeam.map((c) => ({ id: c.id, name: c.name, workshopName: c.workshop.name })));
+});
+
+app.get("/categories", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const categories = await prisma.productCategory.findMany({
+    where: { companyId: cid, visible: true, workshop: { visible: true } },
     include: { workshop: true },
     orderBy: { name: "asc" },
   });
@@ -538,6 +1315,7 @@ app.get("/categories", async (_req: Request, res: Response) => {
 });
 
 app.post("/categories", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const { name, capacityPerTeamPerDay, workshopId } = req.body;
 
   if (!name || typeof name !== "string") {
@@ -564,6 +1342,7 @@ app.post("/categories", async (req: Request, res: Response) => {
         name,
         capacityPerTeamPerDay,
         workshop: { connect: { id: workshopId } },
+        company: { connect: { id: cid } },
       },
     });
     res.status(201).json(category);
@@ -573,13 +1352,15 @@ app.post("/categories", async (req: Request, res: Response) => {
 });
 
 app.put("/categories/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string;
-  const { name, capacityPerTeamPerDay, workshopId } = req.body;
+  const { name, capacityPerTeamPerDay, workshopId, visible } = req.body;
 
   const data: {
     name?: string;
     capacityPerTeamPerDay?: number;
     workshopId?: string;
+    visible?: boolean;
   } = {};
 
   if (name !== undefined) {
@@ -609,11 +1390,29 @@ app.put("/categories/:id", async (req: Request, res: Response) => {
     data.workshopId = workshopId;
   }
 
+  if (visible !== undefined) {
+    if (typeof visible !== "boolean") {
+      return res.status(400).json({ error: "visible must be a boolean" });
+    }
+    data.visible = visible;
+  }
+
   try {
-    const category = await prisma.productCategory.update({
-      where: { id },
-      data,
-    });
+    const existing = await prisma.productCategory.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Category not found" }); return; }
+
+    const category = await prisma.productCategory.update({ where: { id }, data });
+
+    // При скрытии категории удаляем все плановые задачи по её позициям
+    if (visible === false && existing.visible === true) {
+      await prisma.dailyTask.deleteMany({
+        where: {
+          orderItem: { product: { categoryId: id } },
+          actualQuantity: null,
+        },
+      });
+    }
+
     res.json(category);
   } catch (err) {
     res.status(404).json({ error: "Category not found" });
@@ -621,9 +1420,12 @@ app.put("/categories/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/categories/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string;
 
   try {
+    const existing = await prisma.productCategory.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Category not found" }); return; }
     await prisma.productCategory.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {
@@ -631,10 +1433,115 @@ app.delete("/categories/:id", async (req: Request, res: Response) => {
   }
 });
 
+// --- Category blocks ---
+
+app.get("/categories/:id/blocks", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const categoryId = req.params.id as string;
+  const blocks = await prisma.categoryBlock.findMany({
+    where: { categoryId, companyId: cid },
+    orderBy: { startDate: "asc" },
+  });
+  res.json(blocks);
+});
+
+app.post("/categories/:id/blocks", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const categoryId = req.params.id as string;
+  const { startDate, endDate, reason, cascadeTasks } = req.body as {
+    startDate?: string; endDate?: string; reason?: string; cascadeTasks?: boolean;
+  };
+
+  if (!startDate || !endDate) {
+    res.status(400).json({ error: "startDate и endDate обязательны" }); return;
+  }
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+    res.status(400).json({ error: "Некорректные даты" }); return;
+  }
+
+  const cat = await prisma.productCategory.findFirst({ where: { id: categoryId, companyId: cid } });
+  if (!cat) { res.status(404).json({ error: "Категория не найдена" }); return; }
+
+  const block = await prisma.categoryBlock.create({
+    data: { categoryId, companyId: cid, startDate: start, endDate: end, reason: reason ?? null },
+  });
+
+  // Optionally push tasks that fall inside the blocked period to after the block
+  if (cascadeTasks) {
+    const affectedTasks = await prisma.dailyTask.findMany({
+      where: {
+        date: { gte: start, lte: end },
+        actualQuantity: null,
+        manuallyPlaced: false,
+        orderItem: { product: { categoryId, companyId: cid } },
+      },
+      orderBy: { date: "asc" },
+    });
+
+    // Sum deleted quantity per orderItem
+    const byOrderItem = new Map<string, { qty: number; teamId: string | null }>();
+    for (const t of affectedTasks) {
+      const cur = byOrderItem.get(t.orderItemId) ?? { qty: 0, teamId: t.teamId };
+      cur.qty += t.plannedQuantity;
+      byOrderItem.set(t.orderItemId, cur);
+    }
+
+    // Delete tasks inside blocked period
+    if (affectedTasks.length > 0) {
+      await prisma.dailyTask.deleteMany({
+        where: { id: { in: affectedTasks.map(t => t.id) } },
+      });
+    }
+
+    // Pile the deleted quantity onto the first working day after the block, then cascade right
+    const dayAfterBlock = getNextWorkingDay(end);
+    const teamsToShift = new Set<string>();
+
+    for (const [orderItemId, { qty, teamId }] of byOrderItem) {
+      if (qty <= 0) continue;
+      const existing = await prisma.dailyTask.findUnique({
+        where: { orderItemId_date: { orderItemId, date: dayAfterBlock } },
+      });
+      if (existing) {
+        await prisma.dailyTask.update({
+          where: { id: existing.id },
+          data: { plannedQuantity: existing.plannedQuantity + qty },
+        });
+      } else {
+        await prisma.dailyTask.create({
+          data: { orderItemId, teamId, date: dayAfterBlock, plannedQuantity: qty },
+        });
+      }
+      if (teamId) teamsToShift.add(teamId);
+    }
+
+    setImmediate(async () => {
+      for (const teamId of teamsToShift) {
+        try { await cascadeShiftRight(teamId, dayAfterBlock); } catch { /* ignore */ }
+      }
+    });
+  }
+
+  res.status(201).json(block);
+});
+
+app.delete("/category-blocks/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const id = req.params.id as string;
+  const block = await prisma.categoryBlock.findFirst({ where: { id, companyId: cid } });
+  if (!block) { res.status(404).json({ error: "Блок не найден" }); return; }
+  await prisma.categoryBlock.delete({ where: { id } });
+  res.status(204).send();
+});
+
 // --- Products ---
 
-app.get("/products", async (_req: Request, res: Response) => {
+app.get("/products", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const products = await prisma.product.findMany({
+    where: { companyId: cid },
     include: { category: true },
     orderBy: { code: "asc" },
   });
@@ -642,6 +1549,7 @@ app.get("/products", async (_req: Request, res: Response) => {
 });
 
 app.post("/products", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const { code, name, categoryId } = req.body;
 
   if (!code || typeof code !== "string") {
@@ -660,6 +1568,7 @@ app.post("/products", async (req: Request, res: Response) => {
         code,
         name,
         category: { connect: { id: categoryId } },
+        company: { connect: { id: cid } },
       },
     });
     res.status(201).json(product);
@@ -669,10 +1578,14 @@ app.post("/products", async (req: Request, res: Response) => {
 });
 
 app.put("/products/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string;
-  const { code, name, categoryId } = req.body;
+  const { code, name, categoryId, capacityPerDay, capacityLocked } = req.body;
 
-  const data: { code?: string; name?: string; categoryId?: string } = {};
+  const data: {
+    code?: string; name?: string; categoryId?: string;
+    capacityPerDay?: number | null; capacityLocked?: boolean;
+  } = {};
 
   if (code !== undefined) {
     if (!code || typeof code !== "string") {
@@ -688,18 +1601,29 @@ app.put("/products/:id", async (req: Request, res: Response) => {
   }
   if (categoryId !== undefined) {
     if (!categoryId || typeof categoryId !== "string") {
-      return res
-        .status(400)
-        .json({ error: "categoryId must be a non-empty string" });
+      return res.status(400).json({ error: "categoryId must be a non-empty string" });
     }
     data.categoryId = categoryId;
   }
+  if (capacityPerDay !== undefined) {
+    if (capacityPerDay === null) {
+      data.capacityPerDay = null;
+    } else if (typeof capacityPerDay !== "number" || !Number.isInteger(capacityPerDay) || capacityPerDay <= 0) {
+      return res.status(400).json({ error: "capacityPerDay must be a positive integer or null" });
+    } else {
+      data.capacityPerDay = capacityPerDay;
+      data.capacityLocked = true; // manual edit → lock automatically
+    }
+  }
+  // Explicit unlock (reset to auto from 1C)
+  if (capacityLocked === false) {
+    data.capacityLocked = false;
+  }
 
   try {
-    const product = await prisma.product.update({
-      where: { id },
-      data,
-    });
+    const existing = await prisma.product.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Product not found" }); return; }
+    const product = await prisma.product.update({ where: { id }, data });
     res.json(product);
   } catch (err) {
     res.status(404).json({ error: "Product not found" });
@@ -707,9 +1631,12 @@ app.put("/products/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/products/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string;
 
   try {
+    const existing = await prisma.product.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Product not found" }); return; }
     await prisma.product.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {
@@ -719,14 +1646,17 @@ app.delete("/products/:id", async (req: Request, res: Response) => {
 
 // --- Teams ---
 
-app.get("/teams", async (_req: Request, res: Response) => {
+app.get("/teams", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const teams = await prisma.team.findMany({
+    where: { companyId: cid },
     orderBy: { name: "asc" },
   });
   res.json(teams);
 });
 
 app.post("/teams", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const { name } = req.body;
 
   if (!name || typeof name !== "string") {
@@ -735,7 +1665,7 @@ app.post("/teams", async (req: Request, res: Response) => {
 
   try {
     const team = await prisma.team.create({
-      data: { name },
+      data: { name, companyId: cid },
     });
     res.status(201).json(team);
   } catch (err) {
@@ -744,6 +1674,7 @@ app.post("/teams", async (req: Request, res: Response) => {
 });
 
 app.put("/teams/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string;
   const { name } = req.body;
 
@@ -754,10 +1685,9 @@ app.put("/teams/:id", async (req: Request, res: Response) => {
   }
 
   try {
-    const team = await prisma.team.update({
-      where: { id },
-      data: { name },
-    });
+    const existing = await prisma.team.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Team not found" }); return; }
+    const team = await prisma.team.update({ where: { id }, data: { name } });
     res.json(team);
   } catch (err) {
     res.status(404).json({ error: "Team not found" });
@@ -765,9 +1695,12 @@ app.put("/teams/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/teams/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string;
 
   try {
+    const existing = await prisma.team.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Team not found" }); return; }
     await prisma.team.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {
@@ -778,7 +1711,9 @@ app.delete("/teams/:id", async (req: Request, res: Response) => {
 // --- Orders ---
 
 app.get("/orders", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const orders = await prisma.order.findMany({
+    where: { companyId: cid, active: true },
     include: { items: { include: { product: true } } },
     orderBy: { orderNumber: "asc" },
   });
@@ -786,6 +1721,7 @@ app.get("/orders", async (req: Request, res: Response) => {
 });
 
 app.post("/orders", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const {
     orderNumber,
     customer,
@@ -813,6 +1749,7 @@ app.post("/orders", async (req: Request, res: Response) => {
         manager: manager || null,
         paymentTerms: paymentTerms || null,
         approvedAt: approvedAt ? new Date(approvedAt) : null,
+        companyId: cid,
       },
     });
     res.status(201).json(order);
@@ -822,6 +1759,7 @@ app.post("/orders", async (req: Request, res: Response) => {
 });
 
 app.put("/orders/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id;
   if (typeof id !== "string") return res.status(400).json({ error: "Invalid id" });
   const {
@@ -879,10 +1817,9 @@ app.put("/orders/:id", async (req: Request, res: Response) => {
   }
 
   try {
-    const order = await prisma.order.update({
-      where: { id },
-      data,
-    });
+    const existing = await prisma.order.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Order not found" }); return; }
+    const order = await prisma.order.update({ where: { id }, data });
     res.json(order);
   } catch (err) {
     res.status(404).json({ error: "Order not found" });
@@ -890,10 +1827,13 @@ app.put("/orders/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/orders/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id;
   if (typeof id !== "string") return res.status(400).json({ error: "Invalid id" });
 
   try {
+    const existing = await prisma.order.findFirst({ where: { id, companyId: cid } });
+    if (!existing) { res.status(404).json({ error: "Order not found" }); return; }
     await prisma.order.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {
@@ -904,9 +1844,10 @@ app.delete("/orders/:id", async (req: Request, res: Response) => {
 // --- Order Items ---
 
 app.get("/order-items", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const orderId = req.query.orderId as string | undefined;
 
-  const where = orderId ? { orderId } : {};
+  const where = orderId ? { orderId, order: { companyId: cid } } : { order: { companyId: cid } };
 
   const items = await prisma.orderItem.findMany({
     where,
@@ -1062,13 +2003,11 @@ app.get("/order-items/:id/remaining", async (req: Request, res: Response) => {
 // --- Daily Tasks (план по датам) ---
 
 app.get("/daily-tasks", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const orderItemId = req.query.orderItemId as string | undefined;
   const dateStr = req.query.date as string | undefined;
 
-  const where: {
-    orderItemId?: string;
-    date?: Date;
-  } = {};
+  const where: any = { orderItem: { order: { companyId: cid } } };
 
   if (orderItemId) {
     where.orderItemId = orderItemId;
@@ -1096,6 +2035,7 @@ app.get("/daily-tasks", async (req: Request, res: Response) => {
 
 // Просмотр плана с фильтрами
 app.get("/daily-tasks/plan", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const dateStr = req.query.date as string | undefined;
   const dateFromStr = req.query.dateFrom as string | undefined;
   const dateToStr = req.query.dateTo as string | undefined;
@@ -1104,7 +2044,7 @@ app.get("/daily-tasks/plan", async (req: Request, res: Response) => {
   const orderId = req.query.orderId as string | undefined;
   const categoryId = req.query.categoryId as string | undefined;
 
-  const where: any = {};
+  const where: any = { orderItem: { order: { companyId: cid } } };
 
   // Фильтр по дате (одна дата или диапазон)
   if (dateStr) {
@@ -1184,11 +2124,12 @@ app.get("/daily-tasks/plan", async (req: Request, res: Response) => {
 
 // Сводка по участкам (для графика)
 app.get("/daily-tasks/summary", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const dateStr = req.query.date as string | undefined;
   const dateFromStr = req.query.dateFrom as string | undefined;
   const dateToStr = req.query.dateTo as string | undefined;
 
-  const dateWhere: any = {};
+  const dateWhere: any = { orderItem: { order: { companyId: cid } } };
 
   if (dateStr) {
     const date = new Date(dateStr);
@@ -1331,6 +2272,7 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
     plannedQuantity?: number;
     teamId?: string | null;
     date?: Date;
+    manuallyPlaced?: boolean;
   } = {};
 
   if (plannedQuantity !== undefined) {
@@ -1360,9 +2302,15 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid date format" });
     }
     data.date = taskDate;
+    data.manuallyPlaced = true;
   }
 
   try {
+    // Read old state before update (needed for date-change logic)
+    const oldTask = date !== undefined
+      ? await prisma.dailyTask.findUnique({ where: { id }, select: { date: true, teamId: true, orderItemId: true } })
+      : null;
+
     const task = await prisma.dailyTask.update({
       where: { id },
       data,
@@ -1376,7 +2324,32 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
         team: true,
       },
     });
-    res.json(task);
+
+    // Auto-compact / cascade when a date change occurred
+    if (oldTask && date !== undefined) {
+      const oldDate = oldTask.date;
+      const newDate = new Date(date);
+      const oldMs = oldDate.getTime();
+      const newMs = newDate.getTime();
+
+      if (newMs > oldMs) {
+        // Task moved later → compact this orderItem, then pull the queue forward into freed capacity
+        const freedTeamId = oldTask.teamId;
+        const freedDate = oldDate;
+        setImmediate(async () => {
+          await compactOrderItem(oldTask.orderItemId, newDate);
+          if (freedTeamId) await cascadeShiftLeft(freedTeamId, freedDate);
+        });
+      } else if (newMs < oldMs) {
+        // Task moved earlier → cascade-push excess tasks on the new date rightward
+        const effectiveTeamId = (data.teamId !== undefined ? data.teamId : oldTask.teamId) as string | null;
+        if (effectiveTeamId) {
+          setImmediate(() => cascadeShiftRight(effectiveTeamId, newDate));
+        }
+      }
+    }
+
+    res.json({ ...task, autoAdjust: oldTask && date !== undefined && new Date(date).getTime() !== oldTask.date.getTime() });
   } catch (err: any) {
     if (err.code === "P2002") {
       res.status(409).json({ error: "Task for this order item and date already exists" });
@@ -1524,10 +2497,11 @@ app.get("/daily-tasks/:id/move-suggestions", async (req: Request, res: Response)
 // --- Корректировка мощностей бригад по дням ---
 
 app.get("/team-day-capacity", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const dateStr = req.query.date as string | undefined;
   const teamId = req.query.teamId as string | undefined;
 
-  const where: { date?: Date; teamId?: string } = {};
+  const where: any = { team: { companyId: cid } };
   if (dateStr) {
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) where.date = d;
@@ -1543,6 +2517,7 @@ app.get("/team-day-capacity", async (req: Request, res: Response) => {
 });
 
 app.post("/team-day-capacity", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const { teamId, date, factor, note } = req.body;
 
   if (!teamId || typeof teamId !== "string") return res.status(400).json({ error: "teamId is required" });
@@ -1551,6 +2526,9 @@ app.post("/team-day-capacity", async (req: Request, res: Response) => {
 
   const dayDate = new Date(date);
   if (isNaN(dayDate.getTime())) return res.status(400).json({ error: "Invalid date" });
+
+  const teamOwned = await prisma.team.findFirst({ where: { id: teamId, companyId: cid } });
+  if (!teamOwned) return res.status(404).json({ error: "Team not found" });
 
   try {
     const record = await prisma.teamDayCapacity.upsert({
@@ -1566,10 +2544,13 @@ app.post("/team-day-capacity", async (req: Request, res: Response) => {
 });
 
 app.delete("/team-day-capacity/:id", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id;
   if (typeof id !== "string") return res.status(400).json({ error: "Invalid id" });
 
   try {
+    const existing = await prisma.teamDayCapacity.findFirst({ where: { id, team: { companyId: cid } } });
+    if (!existing) { res.status(404).json({ error: "Record not found" }); return; }
     await prisma.teamDayCapacity.delete({ where: { id } });
     res.status(204).send();
   } catch {
@@ -1580,13 +2561,11 @@ app.delete("/team-day-capacity/:id", async (req: Request, res: Response) => {
 // --- Category-Team связь (какие бригады работают с какими категориями) ---
 
 app.get("/category-teams", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const categoryId = req.query.categoryId as string | undefined;
   const teamId = req.query.teamId as string | undefined;
 
-  const where: {
-    categoryId?: string;
-    teamId?: string;
-  } = {};
+  const where: any = { category: { companyId: cid } };
 
   if (categoryId) {
     where.categoryId = categoryId;
@@ -1609,13 +2588,14 @@ app.get("/category-teams", async (req: Request, res: Response) => {
 
 // Получить бригады для категории
 app.get("/categories/:categoryId/teams", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const categoryId = req.params.categoryId as string | undefined;
   if (typeof categoryId !== "string") {
     return res.status(400).json({ error: "Invalid categoryId" });
   }
 
   const links = await prisma.categoryTeam.findMany({
-    where: { categoryId },
+    where: { categoryId, category: { companyId: cid } },
     include: { team: true },
   });
 
@@ -1625,8 +2605,11 @@ app.get("/categories/:categoryId/teams", async (req: Request, res: Response) => 
 
 // Загрузка бригады на дату + мощность
 app.get("/teams/:teamId/load", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const teamId = req.params.teamId as string | undefined;
   if (typeof teamId !== "string") return res.status(400).json({ error: "Invalid teamId" });
+  const teamOwned = await prisma.team.findFirst({ where: { id: teamId, companyId: cid } });
+  if (!teamOwned) return res.status(404).json({ error: "Team not found" });
 
   const dateStr = req.query.date as string | undefined;
   if (!dateStr) return res.status(400).json({ error: "date query param required" });
@@ -1649,8 +2632,11 @@ app.get("/teams/:teamId/load", async (req: Request, res: Response) => {
 
 // Перебалансировка дня: перенос излишка на следующий день
 app.post("/teams/:teamId/rebalance-day", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const teamId = req.params.teamId as string | undefined;
   if (typeof teamId !== "string") return res.status(400).json({ error: "Invalid teamId" });
+  const teamOwned = await prisma.team.findFirst({ where: { id: teamId, companyId: cid } });
+  if (!teamOwned) return res.status(404).json({ error: "Team not found" });
 
   const { date } = req.body;
   if (!date) return res.status(400).json({ error: "date is required" });
@@ -1721,13 +2707,14 @@ app.post("/teams/:teamId/rebalance-day", async (req: Request, res: Response) => 
 
 // Получить категории для бригады
 app.get("/teams/:teamId/categories", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const teamId = req.params.teamId as string | undefined;
   if (typeof teamId !== "string") {
     return res.status(400).json({ error: "Invalid teamId" });
   }
 
   const links = await prisma.categoryTeam.findMany({
-    where: { teamId },
+    where: { teamId, team: { companyId: cid } },
     include: { category: { include: { workshop: true } } },
   });
 
@@ -1737,6 +2724,7 @@ app.get("/teams/:teamId/categories", async (req: Request, res: Response) => {
 
 // Назначить бригаду на категорию
 app.post("/category-teams", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const { categoryId, teamId } = req.body;
 
   if (!categoryId || typeof categoryId !== "string") {
@@ -1745,6 +2733,11 @@ app.post("/category-teams", async (req: Request, res: Response) => {
   if (!teamId || typeof teamId !== "string") {
     return res.status(400).json({ error: "teamId is required" });
   }
+
+  const catOwned = await prisma.productCategory.findFirst({ where: { id: categoryId, companyId: cid } });
+  if (!catOwned) return res.status(404).json({ error: "Category not found" });
+  const teamOwned = await prisma.team.findFirst({ where: { id: teamId, companyId: cid } });
+  if (!teamOwned) return res.status(404).json({ error: "Team not found" });
 
   try {
     const link = await prisma.categoryTeam.create({
@@ -1769,6 +2762,7 @@ app.post("/category-teams", async (req: Request, res: Response) => {
 
 // Убрать бригаду с категории
 app.delete("/category-teams", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const { categoryId, teamId } = req.query;
 
   if (!categoryId || typeof categoryId !== "string") {
@@ -1777,6 +2771,9 @@ app.delete("/category-teams", async (req: Request, res: Response) => {
   if (!teamId || typeof teamId !== "string") {
     return res.status(400).json({ error: "teamId query parameter is required" });
   }
+
+  const catOwned = await prisma.productCategory.findFirst({ where: { id: categoryId, companyId: cid } });
+  if (!catOwned) return res.status(404).json({ error: "Category-team link not found" });
 
   try {
     await prisma.categoryTeam.delete({
@@ -2098,6 +3095,7 @@ app.post("/orders/:id/auto-plan", async (req: Request, res: Response) => {
 
 // Перегрузка: задачи, которые не успеем к сроку
 app.get("/planning/overload", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const dateFromStr = req.query.dateFrom as string | undefined;
   const dateToStr = req.query.dateTo as string | undefined;
 
@@ -2108,6 +3106,7 @@ app.get("/planning/overload", async (req: Request, res: Response) => {
     orderItem: {
       order: {
         dueDate: { not: null },
+        companyId: cid,
       },
     },
   };
@@ -2148,6 +3147,7 @@ app.get("/planning/overload", async (req: Request, res: Response) => {
 
 // Недогрузка: бригады, загруженные менее чем на 100%
 app.get("/planning/underload", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const dateFromStr = req.query.dateFrom as string | undefined;
   const dateToStr = req.query.dateTo as string | undefined;
 
@@ -2167,6 +3167,7 @@ app.get("/planning/underload", async (req: Request, res: Response) => {
     where: {
       date: { gte: dateFrom, lte: dateTo },
       teamId: { not: null },
+      orderItem: { order: { companyId: cid } },
     },
     include: {
       team: true,
@@ -2251,6 +3252,7 @@ app.get("/planning/underload", async (req: Request, res: Response) => {
 
 // Загрузка бригады по датам
 app.get("/planning/team-load", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const teamId = req.query.teamId as string | undefined;
   const dateFromStr = req.query.dateFrom as string | undefined;
   const dateToStr = req.query.dateTo as string | undefined;
@@ -2270,11 +3272,15 @@ app.get("/planning/team-load", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Invalid date format" });
   }
 
+  const teamOwned = await prisma.team.findFirst({ where: { id: teamId, companyId: cid } });
+  if (!teamOwned) return res.status(404).json({ error: "Team not found" });
+
   // Получаем задачи бригады
   const tasks = await prisma.dailyTask.findMany({
     where: {
       teamId,
       date: { gte: dateFrom, lte: dateTo },
+      orderItem: { order: { companyId: cid } },
     },
     include: {
       orderItem: {
@@ -2363,10 +3369,13 @@ app.get("/planning/team-load", async (req: Request, res: Response) => {
 
 // Аналитика по заказам: что успевается к сроку, что нет
 app.get("/planning/orders-status", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const orderId = req.query.orderId as string | undefined;
 
   const where: any = {
     dueDate: { not: null },
+    companyId: cid,
+    active: true,
   };
 
   if (orderId) {
@@ -2514,6 +3523,7 @@ app.get("/planning/orders-status", async (req: Request, res: Response) => {
 
 // Перепланирование заказа (удаление старых задач и перепланирование)
 app.post("/orders/:id/replan", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const id = req.params.id as string | undefined;
   if (typeof id !== "string") {
     return res.status(400).json({ error: "Invalid id" });
@@ -2522,8 +3532,8 @@ app.post("/orders/:id/replan", async (req: Request, res: Response) => {
 
   try {
     // Получаем заказ с позициями
-    const order = await prisma.order.findUnique({
-      where: { id },
+    const order = await prisma.order.findFirst({
+      where: { id, companyId: cid },
       include: {
         items: {
           include: {
@@ -2599,6 +3609,7 @@ app.post("/orders/:id/replan", async (req: Request, res: Response) => {
 // --- Excel Import ---
 
 app.post("/import/excel", upload.single("file"), async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
@@ -2646,9 +3657,9 @@ app.post("/import/excel", upload.single("file"), async (req: Request, res: Respo
     }
 
     // Get or create default workshop
-    let defaultWorkshop = await prisma.workshop.findFirst();
+    let defaultWorkshop = await prisma.workshop.findFirst({ where: { companyId: cid } });
     if (!defaultWorkshop) {
-      defaultWorkshop = await prisma.workshop.create({ data: { name: "Основное производство" } });
+      defaultWorkshop = await prisma.workshop.create({ data: { name: "Основное производство", companyId: cid } });
     }
 
     // Detect date columns in header (format "DD.MM.YYYY")
@@ -2739,7 +3750,7 @@ app.post("/import/excel", upload.single("file"), async (req: Request, res: Respo
       const capacityPerTeamPerDay = capMatch ? parseInt(capMatch[1]!, 10) : 100;
 
       // Upsert category
-      const existingCat = await prisma.productCategory.findFirst({ where: { name: categoryName } });
+      const existingCat = await prisma.productCategory.findFirst({ where: { name: categoryName, companyId: cid } });
       let category;
       if (existingCat) {
         category = await prisma.productCategory.update({
@@ -2749,13 +3760,13 @@ app.post("/import/excel", upload.single("file"), async (req: Request, res: Respo
         summary.categories.updated++;
       } else {
         category = await prisma.productCategory.create({
-          data: { name: categoryName, capacityPerTeamPerDay, workshopId: defaultWorkshop.id },
+          data: { name: categoryName, capacityPerTeamPerDay, workshopId: defaultWorkshop.id, companyId: cid },
         });
         summary.categories.created++;
       }
 
       // Upsert product
-      const existingProduct = await prisma.product.findUnique({ where: { code: String(code) } });
+      const existingProduct = await prisma.product.findUnique({ where: { code_companyId: { code: String(code), companyId: cid } } });
       let product;
       if (existingProduct) {
         product = await prisma.product.update({
@@ -2765,13 +3776,13 @@ app.post("/import/excel", upload.single("file"), async (req: Request, res: Respo
         summary.products.updated++;
       } else {
         product = await prisma.product.create({
-          data: { code: String(code), name: productName, categoryId: category.id },
+          data: { code: String(code), name: productName, categoryId: category.id, companyId: cid },
         });
         summary.products.created++;
       }
 
       // Upsert order
-      const existingOrder = await prisma.order.findUnique({ where: { orderNumber: String(orderNum) } });
+      const existingOrder = await prisma.order.findFirst({ where: { orderNumber: String(orderNum), companyId: cid } });
       let order;
       if (existingOrder) {
         order = await prisma.order.update({
@@ -2793,6 +3804,7 @@ app.post("/import/excel", upload.single("file"), async (req: Request, res: Respo
             paymentTerms: paymentTerms ?? null,
             approvedAt: approvedAt ?? null,
             description: orderDate ? `Дата заказа: ${orderDate.toLocaleDateString("ru-RU")}` : null,
+            companyId: cid,
           },
         });
         summary.orders.created++;
@@ -2907,6 +3919,7 @@ app.post("/import/excel", upload.single("file"), async (req: Request, res: Respo
           date: yesterday,
           plannedQuantity: { gt: 0 },
           actualQuantity: null,
+          orderItem: { order: { companyId: cid } },
         },
         include: {
           orderItem: {
@@ -2976,6 +3989,7 @@ interface OneCImportRow {
 }
 
 app.post("/import/1c", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   try {
     const rows: OneCImportRow[] = req.body;
 
@@ -3003,9 +4017,9 @@ app.post("/import/1c", async (req: Request, res: Response) => {
     }
 
     // Get or create default workshop
-    let defaultWorkshop = await prisma.workshop.findFirst();
+    let defaultWorkshop = await prisma.workshop.findFirst({ where: { companyId: cid } });
     if (!defaultWorkshop) {
-      defaultWorkshop = await prisma.workshop.create({ data: { name: "Основное производство" } });
+      defaultWorkshop = await prisma.workshop.create({ data: { name: "Основное производство", companyId: cid } });
     }
 
     const yesterday = new Date();
@@ -3052,7 +4066,7 @@ app.post("/import/1c", async (req: Request, res: Response) => {
       const capacityPerTeamPerDay = capMatch ? parseInt(capMatch[1]!, 10) : 100;
 
       // Upsert category
-      const existingCat = await prisma.productCategory.findFirst({ where: { name: categoryName } });
+      const existingCat = await prisma.productCategory.findFirst({ where: { name: categoryName, companyId: cid } });
       let category;
       if (existingCat) {
         category = await prisma.productCategory.update({
@@ -3062,13 +4076,13 @@ app.post("/import/1c", async (req: Request, res: Response) => {
         summary.categories.updated++;
       } else {
         category = await prisma.productCategory.create({
-          data: { name: categoryName, capacityPerTeamPerDay, workshopId: defaultWorkshop.id },
+          data: { name: categoryName, capacityPerTeamPerDay, workshopId: defaultWorkshop.id, companyId: cid },
         });
         summary.categories.created++;
       }
 
       // Upsert product
-      const existingProduct = await prisma.product.findUnique({ where: { code: productCode } });
+      const existingProduct = await prisma.product.findUnique({ where: { code_companyId: { code: productCode, companyId: cid } } });
       let product;
       if (existingProduct) {
         product = await prisma.product.update({
@@ -3078,14 +4092,14 @@ app.post("/import/1c", async (req: Request, res: Response) => {
         summary.products.updated++;
       } else {
         product = await prisma.product.create({
-          data: { code: productCode, name: productName, categoryId: category.id },
+          data: { code: productCode, name: productName, categoryId: category.id, companyId: cid },
         });
         summary.products.created++;
       }
 
       // Upsert order
       const orderNumber = String(row.orderNumber).trim();
-      const existingOrder = await prisma.order.findUnique({ where: { orderNumber } });
+      const existingOrder = await prisma.order.findFirst({ where: { orderNumber, companyId: cid } });
       let order;
       if (existingOrder) {
         order = await prisma.order.update({
@@ -3107,6 +4121,7 @@ app.post("/import/1c", async (req: Request, res: Response) => {
             paymentTerms,
             approvedAt,
             description: orderDate ? `Дата заказа: ${orderDate.toLocaleDateString("ru-RU")}` : null,
+            companyId: cid,
           },
         });
         summary.orders.created++;
@@ -3209,17 +4224,201 @@ app.post("/import/resolve-conflict", async (req: Request, res: Response) => {
 
 // --- Replan queue (sort by approvedAt asc, nulls last) ---
 
-app.post("/planning/replan-queue", async (_req: Request, res: Response) => {
+app.get("/planning/export-excel", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const { from, to } = req.query as { from?: string; to?: string };
+
+  const dateFilter: { gte?: Date; lte?: Date } = {};
+  if (from) dateFilter.gte = new Date(from);
+  if (to) {
+    const toDate = new Date(to);
+    toDate.setHours(23, 59, 59, 999);
+    dateFilter.lte = toDate;
+  }
+
+  const tasks = await prisma.dailyTask.findMany({
+    where: {
+      orderItem: { order: { companyId: cid } },
+      ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}),
+    },
+    include: {
+      orderItem: {
+        include: {
+          order: { select: { id: true, orderNumber: true, customer: true, dueDate: true, approvedAt: true } },
+          product: { include: { category: true } },
+        },
+      },
+      team: true,
+    },
+    orderBy: [{ date: "asc" }],
+  });
+
+  const isoDate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  };
+  const fmtShort = (iso: string) => `${iso.slice(8)}.${iso.slice(5, 7)}`;
+  const fmtFull = (d: Date | null | undefined) =>
+    d ? d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+
+  // Collect unique ISO dates, sorted
+  const dateSet = new Set<string>();
+  for (const t of tasks) dateSet.add(isoDate(t.date));
+  const isoDates = Array.from(dateSet).sort();
+
+  // Group: order → orderItem
+  type ItemData = {
+    productCode: string; productName: string;
+    categoryName: string; teamName: string;
+    byDate: Map<string, number>; totalActual: number;
+  };
+  type OrderData = {
+    orderNumber: string; customer: string;
+    dueDate: Date | null; approvedAt: Date | null;
+    items: Map<string, ItemData>;
+  };
+  const orderMap = new Map<string, OrderData>();
+
+  for (const t of tasks) {
+    const oid = t.orderItem.order.id;
+    if (!orderMap.has(oid)) {
+      orderMap.set(oid, {
+        orderNumber: t.orderItem.order.orderNumber,
+        customer: t.orderItem.order.customer,
+        dueDate: t.orderItem.order.dueDate,
+        approvedAt: t.orderItem.order.approvedAt,
+        items: new Map(),
+      });
+    }
+    const order = orderMap.get(oid)!;
+    const iid = t.orderItemId;
+    if (!order.items.has(iid)) {
+      order.items.set(iid, {
+        productCode: t.orderItem.product.code,
+        productName: t.orderItem.product.name,
+        categoryName: t.orderItem.product.category.name,
+        teamName: t.team?.name ?? "—",
+        byDate: new Map(),
+        totalActual: 0,
+      });
+    }
+    const item = order.items.get(iid)!;
+    // Prefer a named team over "—" (fact-only tasks have no team)
+    if (item.teamName === "—" && t.team?.name) item.teamName = t.team.name;
+    const dk = isoDate(t.date);
+    if (t.plannedQuantity > 0) item.byDate.set(dk, (item.byDate.get(dk) ?? 0) + t.plannedQuantity);
+    item.totalActual += t.actualQuantity ?? 0;
+  }
+
+  const sortedOrders = Array.from(orderMap.values()).sort(
+    (a, b) => (a.approvedAt?.getTime() ?? 0) - (b.approvedAt?.getTime() ?? 0)
+  );
+
+  // Build AOA (array of arrays)
+  const FIXED_COLS = ["Заказ", "Клиент", "Срок", "Артикул", "Товар", "Категория", "Бригада", "Итого план", "Итого факт"];
+  const dateHeaders = isoDates.map(fmtShort);
+  const aoa: (string | number)[][] = [[...FIXED_COLS, ...dateHeaders]];
+
+  // Track which rows are order headers (for potential styling)
+  const orderRowIndexes: number[] = [];
+
+  const unplannedRows: (string | number)[][] = [
+    ["Заказ", "Клиент", "Срок", "Артикул", "Товар", "Категория", "Итого факт"],
+  ];
+
+  for (const order of sortedOrders) {
+    const plannedItems = Array.from(order.items.values()).filter(i => i.byDate.size > 0);
+    const unplannedItems = Array.from(order.items.values()).filter(i => i.byDate.size === 0 && i.totalActual > 0);
+
+    // Unplanned actuals → separate sheet
+    for (const item of unplannedItems) {
+      unplannedRows.push([
+        order.orderNumber, order.customer, fmtFull(order.dueDate),
+        item.productCode, item.productName, item.categoryName, item.totalActual,
+      ]);
+    }
+
+    if (plannedItems.length === 0) continue;
+
+    orderRowIndexes.push(aoa.length);
+    aoa.push([
+      order.orderNumber,
+      order.customer,
+      fmtFull(order.dueDate),
+      "", "", "", "", "", "",
+      ...isoDates.map(() => "" as string | number),
+    ]);
+    for (const item of plannedItems) {
+      const totalPlan = Array.from(item.byDate.values()).reduce((s, v) => s + v, 0);
+      aoa.push([
+        "", "", "",
+        item.productCode,
+        item.productName,
+        item.categoryName,
+        item.teamName,
+        totalPlan,
+        item.totalActual || "",
+        ...isoDates.map(d => item.byDate.get(d) ?? ""),
+      ]);
+    }
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Merge Заказ / Клиент / Срок across all product rows of each order
+  const merges: XLSX.Range[] = [];
+  for (let i = 0; i < orderRowIndexes.length; i++) {
+    const startRow = orderRowIndexes[i] as number;
+    const nextStart = orderRowIndexes[i + 1] as number | undefined;
+    const endRow = nextStart !== undefined ? nextStart - 1 : aoa.length - 1;
+    if (endRow > startRow) {
+      for (const col of [0, 1, 2]) {
+        merges.push({ s: { r: startRow, c: col }, e: { r: endRow, c: col } });
+      }
+    }
+  }
+  ws["!merges"] = merges;
+
+  // Column widths
+  ws["!cols"] = [
+    { wch: 20 }, { wch: 24 }, { wch: 12 },
+    { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 14 },
+    { wch: 11 }, { wch: 11 },
+    ...isoDates.map(() => ({ wch: 7 })),
+  ];
+
+  // Freeze header row + first 3 info columns
+  ws["!sheetViews"] = [{ state: "frozen", xSplit: 3, ySplit: 1, topLeftCell: "D2" }];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "План производства");
+  if (unplannedRows.length > 1) {
+    const wsU = XLSX.utils.aoa_to_sheet(unplannedRows);
+    wsU["!cols"] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsU, "Незапланированный факт");
+  }
+
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="plan.xlsx"');
+  res.send(buf);
+});
+
+app.post("/planning/replan-queue", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   try {
     // 1. Delete only future unstarted tasks (preserve past history)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const deleted = await prisma.dailyTask.deleteMany({
-      where: { actualQuantity: null, date: { gte: today } },
+      where: { actualQuantity: null, date: { gte: today }, orderItem: { order: { companyId: cid } } },
     });
 
     // 2. Get all order items with their orders
     const allItems = await prisma.orderItem.findMany({
+      where: { order: { companyId: cid } },
       include: { order: true },
     });
 
@@ -3290,7 +4489,9 @@ app.post("/planning/replan-queue", async (_req: Request, res: Response) => {
 
 // Ожидаемые даты завершения заказов на основе текущего плана
 app.get("/planning/orders-completion", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
   const orders = await prisma.order.findMany({
+    where: { companyId: cid, active: true },
     include: {
       items: {
         include: {
@@ -3368,12 +4569,204 @@ app.get("/planning/orders-completion", async (req: Request, res: Response) => {
   res.json({ count: result.length, orders: result });
 });
 
-// ─── Продакшн: раздача фронтенда ─────────────────────────────────────────────
+// ─── Факт за день: сводка по бригадам и категориям ───────────────────────────
+
+app.get("/planning/fact-day", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const { date } = req.query as { date?: string };
+  if (!date) return res.status(400).json({ error: "date required (YYYY-MM-DD)" });
+
+  const dayStart = new Date(date + "T00:00:00.000Z");
+  const dayEnd   = new Date(date + "T23:59:59.999Z");
+
+  const tasks = await prisma.dailyTask.findMany({
+    where: {
+      date: { gte: dayStart, lte: dayEnd },
+      actualQuantity: { gt: 0 },
+      orderItem: { order: { companyId: cid } },
+    },
+    include: {
+      team: { select: { id: true, name: true } },
+      orderItem: {
+        include: {
+          product: { include: { category: { select: { id: true, name: true } } } },
+          order:   { select: { orderNumber: true } },
+        },
+      },
+    },
+  });
+
+  // Group by team → category
+  const byTeam = new Map<string, {
+    teamId: string; teamName: string;
+    categories: Map<string, { categoryId: string; categoryName: string; actual: number; items: number }>;
+    totalActual: number;
+  }>();
+
+  for (const t of tasks) {
+    const teamId   = t.team?.id   ?? "no-team";
+    const teamName = t.team?.name ?? "Без бригады";
+    const catId    = t.orderItem.product.category?.id   ?? "no-cat";
+    const catName  = t.orderItem.product.category?.name ?? "Без категории";
+    const actual   = t.actualQuantity ?? 0;
+
+    if (!byTeam.has(teamId)) byTeam.set(teamId, { teamId, teamName, categories: new Map(), totalActual: 0 });
+    const teamRow = byTeam.get(teamId)!;
+    teamRow.totalActual += actual;
+
+    if (!teamRow.categories.has(catId)) teamRow.categories.set(catId, { categoryId: catId, categoryName: catName, actual: 0, items: 0 });
+    const catRow = teamRow.categories.get(catId)!;
+    catRow.actual += actual;
+    catRow.items  += 1;
+  }
+
+  const result = Array.from(byTeam.values()).map(row => ({
+    teamId:      row.teamId,
+    teamName:    row.teamName,
+    totalActual: row.totalActual,
+    categories:  Array.from(row.categories.values()).sort((a, b) => b.actual - a.actual),
+  })).sort((a, b) => b.totalActual - a.totalActual);
+
+  res.json({ date, taskCount: tasks.length, teams: result });
+});
+
+// ─── Перенос недодела на сегодня ─────────────────────────────────────────────
+
+app.post("/planning/rollover-shortfall", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+
+  const todayMs = (() => {
+    const msk = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    msk.setUTCHours(0, 0, 0, 0);
+    return msk.getTime();
+  })();
+  const yesterdayDate = new Date(todayMs - 86400000);
+  const todayDate = new Date(todayMs);
+
+  const yesterdayTasks = await prisma.dailyTask.findMany({
+    where: {
+      date: yesterdayDate,
+      actualQuantity: { not: null },
+      orderItem: { order: { companyId: cid } },
+    },
+    include: {
+      orderItem: {
+        include: {
+          product: { include: { category: { select: { capacityPerTeamPerDay: true } } } },
+          order: { select: { orderNumber: true } },
+        },
+      },
+    },
+  });
+
+  const shortfalls = yesterdayTasks.filter(
+    t => t.actualQuantity !== null && t.actualQuantity < t.plannedQuantity
+  );
+
+  if (shortfalls.length === 0) {
+    return res.json({ rolled: 0, items: [], overloaded: [] });
+  }
+
+  const items: { orderNumber: string; productCode: string; shortfall: number }[] = [];
+  const overloadedTeams = new Set<string>();
+
+  for (const task of shortfalls) {
+    const shortfall = task.plannedQuantity - task.actualQuantity!;
+    const { orderItemId, teamId } = task;
+
+    const existing = await prisma.dailyTask.findUnique({
+      where: { orderItemId_date: { orderItemId, date: todayDate } },
+    });
+
+    if (existing) {
+      await prisma.dailyTask.update({
+        where: { id: existing.id },
+        data: { plannedQuantity: existing.plannedQuantity + shortfall },
+      });
+    } else {
+      await prisma.dailyTask.create({
+        data: { orderItemId, teamId, date: todayDate, plannedQuantity: shortfall },
+      });
+    }
+
+    items.push({
+      orderNumber: task.orderItem.order.orderNumber,
+      productCode: task.orderItem.product.code,
+      shortfall,
+    });
+
+    // Check if team is now overloaded on today
+    if (teamId) {
+      const capacity = task.orderItem.product.category?.capacityPerTeamPerDay;
+      if (capacity && capacity > 0) {
+        const sum = await prisma.dailyTask.aggregate({
+          where: { teamId, date: todayDate, orderItem: { order: { companyId: cid } } },
+          _sum: { plannedQuantity: true },
+        });
+        if ((sum._sum.plannedQuantity ?? 0) > capacity) {
+          overloadedTeams.add(teamId);
+        }
+      }
+    }
+  }
+
+  res.json({ rolled: items.length, items, overloadedTeams: Array.from(overloadedTeams) });
+});
+
+// ─── Незапланированный факт ──────────────────────────────────────────────────
+
+app.get("/planning/unplanned-production", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+
+  // Последняя дата с фактом по компании
+  const latest = await prisma.dailyTask.findFirst({
+    where: {
+      actualQuantity: { gt: 0 },
+      orderItem: { order: { companyId: cid } },
+    },
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+
+  if (!latest) return res.json({ date: null, count: 0, items: [] });
+
+  const tasks = await prisma.dailyTask.findMany({
+    where: {
+      date: latest.date,
+      plannedQuantity: 0,
+      actualQuantity: { gt: 0 },
+      orderItem: { order: { companyId: cid } },
+    },
+    include: {
+      orderItem: {
+        include: {
+          product: { include: { category: { select: { id: true, name: true } } } },
+          order: { select: { orderNumber: true, customer: true, dueDate: true } },
+        },
+      },
+    },
+    orderBy: { actualQuantity: "desc" },
+  });
+
+  const items = tasks.map((t) => ({
+    taskId: t.id,
+    orderNumber: t.orderItem.order.orderNumber,
+    customer: t.orderItem.order.customer,
+    dueDate: t.orderItem.order.dueDate,
+    productCode: t.orderItem.product.code,
+    productName: t.orderItem.product.name,
+    categoryName: t.orderItem.product.category?.name ?? null,
+    actualQuantity: t.actualQuantity!,
+  }));
+
+  res.json({ date: latest.date, count: items.length, items });
+});
+
+// ─── Продакшн: SPA fallback ──────────────────────────────────────────────────
 
 if (IS_PROD) {
   const frontendDist = path.join(__dirname, "../frontend/dist");
-  app.use(express.static(frontendDist));
-  app.get("*", (_req: Request, res: Response) => {
+  app.get("*path", (_req: Request, res: Response) => {
     res.sendFile(path.join(frontendDist, "index.html"));
   });
 }

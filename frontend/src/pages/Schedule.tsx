@@ -98,6 +98,109 @@ export default function Schedule() {
   const [mode, setMode] = useState<Mode>('idle')
   const [modeSource, setModeSource] = useState<{ rowId: string; date: string; cell: CellData } | null>(null)
 
+  // Move warning dialog
+  type MoveWarning = { taskId: string; toDate: string; teamName: string; overflowQty: number }
+  const [moveWarning, setMoveWarning] = useState<MoveWarning | null>(null)
+
+  // Undo
+  type UndoAction = { label: string; fn: () => Promise<void> }
+  const [undoAction, setUndoAction] = useState<UndoAction | null>(null)
+
+  // Rollover result
+  type RolloverResult = { rolled: number; items: { orderNumber: string; productCode: string; shortfall: number }[]; overloadedTeams: string[] }
+  const [rolloverResult, setRolloverResult] = useState<RolloverResult | null>(null)
+  const [rollingOver, setRollingOver] = useState(false)
+
+  // Excel export
+  const [showExport, setShowExport] = useState(false)
+  const [exportFrom, setExportFrom] = useState(today)
+  const [exportTo, setExportTo] = useState(addDays(today, 30))
+  const [exporting, setExporting] = useState(false)
+
+  const downloadExcel = async () => {
+    setExporting(true)
+    try {
+      const res = await fetch(`/api/planning/export-excel?from=${exportFrom}&to=${exportTo}`, { credentials: 'include' })
+      if (!res.ok) { alert('Ошибка при экспорте'); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `plan_${exportFrom}_${exportTo}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+      setShowExport(false)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // Planning actions
+  const [planningUnplanned, setPlanningUnplanned] = useState(false)
+  const [replanning, setReplanning] = useState(false)
+  const [planResult, setPlanResult] = useState<string | null>(null)
+  const [noTeamCategories, setNoTeamCategories] = useState<{ id: string; name: string; workshopName: string }[] | null>(null)
+  const [loadingNoTeam, setLoadingNoTeam] = useState(false)
+  const [allTeamsList, setAllTeamsList] = useState<Team[]>([])
+  const [assigningCategory, setAssigningCategory] = useState<string | null>(null)
+  const [assignTeamId, setAssignTeamId] = useState('')
+  const [assignSaving, setAssignSaving] = useState(false)
+
+  const planUnplanned = async () => {
+    setPlanningUnplanned(true); setPlanResult(null)
+    const { data, error: e } = await api.post<{ total: number; planned: number; skipped: number; noTeam: number }>(
+      '/order-items/plan-unplanned', {}
+    )
+    setPlanningUnplanned(false)
+    if (e) { setPlanResult(`Ошибка: ${e}`); return }
+    if (!data) return
+    if (data.total === 0) {
+      setPlanResult('Все позиции уже запланированы.')
+    } else {
+      const parts = [`Запланировано: ${data.planned} из ${data.total} позиций.`]
+      if (data.noTeam > 0) parts.push(`Нет бригады для категории: ${data.noTeam} поз. — нажмите «Категории без бригад».`)
+      if (data.skipped > 0) parts.push(`Пропущено: ${data.skipped}.`)
+      setPlanResult(parts.join(' '))
+    }
+    loadPlan()
+  }
+
+  const replanQueue = async () => {
+    if (!confirm('Удалить все незапущенные задачи и перепланировать все позиции от старых заказов к новым?')) return
+    setReplanning(true); setPlanResult(null)
+    const { data, error: e } = await api.post<{ message: string; deletedTasks: number; planned: number; failed: number }>(
+      '/planning/replan-queue', {}
+    )
+    setReplanning(false)
+    if (e) setPlanResult(`Ошибка: ${e}`)
+    else if (data) setPlanResult(`${data.message} Удалено задач: ${data.deletedTasks}.`)
+    loadPlan()
+  }
+
+  const fetchNoTeamCategories = async () => {
+    if (noTeamCategories !== null) { setNoTeamCategories(null); return }
+    setLoadingNoTeam(true)
+    const [ntRes, teamsRes] = await Promise.all([
+      api.get<{ id: string; name: string; workshopName: string }[]>('/categories/no-team'),
+      api.get<Team[]>('/teams'),
+    ])
+    setLoadingNoTeam(false)
+    setNoTeamCategories(ntRes.data ?? [])
+    setAllTeamsList(teamsRes.data ?? [])
+  }
+
+  const assignTeam = async (categoryId: string) => {
+    if (!assignTeamId) return
+    setAssignSaving(true)
+    const { error: e } = await api.post('/category-teams', { categoryId, teamId: assignTeamId })
+    setAssignSaving(false)
+    if (e) return
+    setAssignTeamId('')
+    setAssigningCategory(null)
+    const { data } = await api.get<{ id: string; name: string; workshopName: string }[]>('/categories/no-team')
+    setNoTeamCategories(data ?? [])
+  }
+
   // popup form state
   const [editQty, setEditQty] = useState(0)
   const [editTeamId, setEditTeamId] = useState('')
@@ -290,21 +393,27 @@ export default function Schedule() {
     if (!popup) return
     setSaving(true)
     if (popup.cell) {
-      await api.put(`/daily-tasks/${popup.cell.taskId}`, {
-        plannedQuantity: editQty,
-        teamId: editTeamId || null,
+      const prevQty = popup.cell.plannedQuantity
+      const prevTeamId = popup.cell.teamId
+      const taskId = popup.cell.taskId
+      await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: editQty, teamId: editTeamId || null })
+      setUndoAction({
+        label: `Вернуть ${prevQty} шт.`,
+        fn: async () => { await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: prevQty, teamId: prevTeamId }) },
       })
     } else {
-      const row = rows.find(r => r.orderItemId === popup.rowId)
-      if (!row) { setSaving(false); return }
       const oi = allOrderItems.find(o => o.id === popup.rowId)
       const defQty = oi?.remainingQuantity ?? editQty
-      await api.post('/daily-tasks', {
+      const { data } = await api.post<{ id: string }>('/daily-tasks', {
         orderItemId: popup.rowId,
         date: new Date(popup.date).toISOString(),
         plannedQuantity: editQty || defQty,
         teamId: editTeamId || undefined,
       })
+      if (data?.id) {
+        const createdId = data.id
+        setUndoAction({ label: 'Удалить созданную задачу', fn: async () => { await api.delete(`/daily-tasks/${createdId}`) } })
+      }
     }
     setSaving(false)
     closePopup()
@@ -314,7 +423,21 @@ export default function Schedule() {
   const handleDelete = async () => {
     if (!popup?.cell) return
     if (!confirm('Удалить задачу?')) return
-    await api.delete(`/daily-tasks/${popup.cell.taskId}`)
+    const { taskId, plannedQuantity, teamId: tId } = popup.cell
+    const orderItemId = popup.rowId
+    const date = popup.date
+    await api.delete(`/daily-tasks/${taskId}`)
+    setUndoAction({
+      label: `Восстановить ${plannedQuantity} шт.`,
+      fn: async () => {
+        await api.post('/daily-tasks', {
+          orderItemId,
+          date: new Date(date).toISOString(),
+          plannedQuantity,
+          teamId: tId || undefined,
+        })
+      },
+    })
     closePopup()
     loadPlan()
   }
@@ -326,14 +449,34 @@ export default function Schedule() {
     setPopup(null)
   }
 
-  const handleMove = async (taskId: string, _fromDate: string, toDate: string) => {
+  const handleMove = async (taskId: string, fromDate: string, toDate: string, force = false) => {
+    // Check target date capacity before moving
+    if (!force && modeSource?.cell.teamId) {
+      const teamId = modeSource.cell.teamId
+      const movedQty = modeSource.cell.plannedQuantity
+      const cap = allOrderItems.find(o => o.id === modeSource.rowId)?.product?.category?.capacityPerTeamPerDay
+      const { data: loadData } = await api.get<TeamLoad>(`/teams/${teamId}/load?date=${toDate}`)
+      if (loadData && cap && cap > 0) {
+        const overflow = Math.round((loadData.load + movedQty / cap - 1) * cap)
+        if (overflow > 0) {
+          const row = rows.find(r => r.orderItemId === modeSource.rowId)
+          setMoveWarning({ taskId, toDate, teamName: row?.teamName ?? 'Бригада', overflowQty: overflow })
+          return
+        }
+      }
+    }
+
     setSaving(true)
-    const { error: e } = await api.put(`/daily-tasks/${taskId}`, { date: new Date(toDate).toISOString() })
+    await api.put(`/daily-tasks/${taskId}`, { date: new Date(toDate).toISOString() })
     setSaving(false)
     setMode('idle')
     setModeSource(null)
-    if (e) setError(e)
-    else loadPlan()
+    setMoveWarning(null)
+    setUndoAction({
+      label: `Вернуть на ${fromDate}`,
+      fn: async () => { await api.put(`/daily-tasks/${taskId}`, { date: new Date(fromDate).toISOString() }) },
+    })
+    loadPlan()
   }
 
   const checkSplitLoad = async (teamId: string | null, date: string) => {
@@ -362,6 +505,24 @@ export default function Schedule() {
     loadPlan()
   }
 
+  const handleRollover = async () => {
+    setRollingOver(true)
+    const { data, error: e } = await api.post<RolloverResult>('/planning/rollover-shortfall', {})
+    setRollingOver(false)
+    if (e) { setError(e); return }
+    setRolloverResult(data ?? null)
+    loadPlan()
+  }
+
+  const handleUndo = async () => {
+    if (!undoAction) return
+    setSaving(true)
+    await undoAction.fn()
+    setSaving(false)
+    setUndoAction(null)
+    loadPlan()
+  }
+
   const loadBarColor = (load: DateLoad | undefined) => {
     if (!load || load.capacity === 0) return '#94a3b8'
     const pct = load.planned / load.capacity
@@ -379,10 +540,153 @@ export default function Schedule() {
 
   return (
     <>
-      <h1 className="page-title">График производства</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+        <h1 className="page-title" style={{ margin: 0 }}>График производства</h1>
+        <button className="btn btn-secondary btn-sm" onClick={handleRollover} disabled={rollingOver || saving}>
+          {rollingOver ? 'Переношу...' : 'Перенести недодел со вчера'}
+        </button>
+        <button type="button" className="btn btn-sm" onClick={planUnplanned} disabled={planningUnplanned || replanning || saving}>
+          {planningUnplanned ? 'Планирую...' : 'Запланировать незапланированные'}
+        </button>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={replanQueue} disabled={replanning || planningUnplanned || saving}>
+          {replanning ? 'Перепланирую...' : 'Перепланировать очередь'}
+        </button>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={fetchNoTeamCategories} disabled={loadingNoTeam}>
+          {loadingNoTeam ? 'Загрузка...' : noTeamCategories !== null ? 'Скрыть список' : 'Категории без бригад'}
+        </button>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowExport(v => !v)}>
+          {showExport ? 'Скрыть экспорт' : '↓ Скачать Excel'}
+        </button>
+        {undoAction && (
+          <button className="btn btn-secondary btn-sm" onClick={handleUndo} disabled={saving}
+            style={{ borderColor: '#f59e0b', color: '#b45309' }}>
+            ↩ Отменить: {undoAction.label}
+          </button>
+        )}
+      </div>
+
+      {showExport && (
+        <div style={{ marginBottom: 10, padding: '10px 14px', borderRadius: 8, fontSize: '0.875rem',
+          background: 'var(--card-bg)', border: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600 }}>Период:</span>
+          <input type="date" value={exportFrom} onChange={e => setExportFrom(e.target.value)}
+            style={{ padding: '3px 8px', border: '1px solid var(--border)', borderRadius: 4 }} />
+          <span>—</span>
+          <input type="date" value={exportTo} onChange={e => setExportTo(e.target.value)}
+            style={{ padding: '3px 8px', border: '1px solid var(--border)', borderRadius: 4 }} />
+          <button className="btn btn-primary btn-sm" onClick={downloadExcel} disabled={exporting}>
+            {exporting ? 'Формирую...' : 'Скачать .xlsx'}
+          </button>
+        </div>
+      )}
+
+      {planResult && (
+        <div style={{ marginBottom: 10, padding: '8px 14px', borderRadius: 8, fontSize: '0.83rem',
+          background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>{planResult}</span>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
+            onClick={() => setPlanResult(null)}>✕</button>
+        </div>
+      )}
+
+      {noTeamCategories !== null && (
+        <div className="card" style={{ marginBottom: 10, padding: '12px 16px' }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>
+            Категории без бригад {noTeamCategories.length === 0 ? '— все назначены ✓' : `(${noTeamCategories.length})`}
+          </div>
+          {noTeamCategories.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr style={{ background: 'var(--sidebar-bg)', color: '#e2e8f0' }}>
+                  <th style={{ padding: '6px 12px', textAlign: 'left' }}>Категория</th>
+                  <th style={{ padding: '6px 12px', textAlign: 'left' }}>Участок</th>
+                  <th style={{ padding: '6px 12px' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {noTeamCategories.map((c) => (
+                  <>
+                    <tr key={c.id} style={{ borderBottom: assigningCategory === c.id ? 'none' : '1px solid var(--border)' }}>
+                      <td style={{ padding: '6px 12px' }}>{c.name}</td>
+                      <td style={{ padding: '6px 12px', color: 'var(--text-secondary)' }}>{c.workshopName}</td>
+                      <td style={{ padding: '6px 12px', textAlign: 'right' }}>
+                        <button
+                          type="button" className="btn btn-primary btn-sm"
+                          onClick={() => { setAssigningCategory(assigningCategory === c.id ? null : c.id); setAssignTeamId('') }}
+                        >
+                          {assigningCategory === c.id ? 'Отмена' : 'Назначить бригаду'}
+                        </button>
+                      </td>
+                    </tr>
+                    {assigningCategory === c.id && (
+                      <tr key={c.id + '_assign'} style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle, #f8fafc)' }}>
+                        <td colSpan={3} style={{ padding: '8px 12px' }}>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <select value={assignTeamId} onChange={e => setAssignTeamId(e.target.value)} style={{ flex: 1 }}>
+                              <option value="">— выберите бригаду —</option>
+                              {allTeamsList.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                            </select>
+                            <button
+                              type="button" className="btn btn-primary btn-sm"
+                              onClick={() => assignTeam(c.id)}
+                              disabled={!assignTeamId || assignSaving}
+                            >
+                              {assignSaving ? 'Сохраняю...' : 'Сохранить'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>
           {error} ✕
+        </div>
+      )}
+
+      {/* Rollover result */}
+      {rolloverResult && (
+        <div style={{ marginBottom: 10, padding: '8px 14px', borderRadius: 8, fontSize: '0.83rem',
+          background: rolloverResult.rolled === 0 ? '#f0fdf4' : '#fef9c3',
+          border: `1px solid ${rolloverResult.rolled === 0 ? '#86efac' : '#fde047'}`,
+          color: rolloverResult.rolled === 0 ? '#15803d' : '#854d0e',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>
+            {rolloverResult.rolled === 0
+              ? 'Недодела нет — все задачи вчера выполнены.'
+              : `Перенесено ${rolloverResult.rolled} позиций.${rolloverResult.overloadedTeams.length > 0 ? ' ⚠ Часть бригад перегружена — проверьте план.' : ''}`}
+          </span>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
+            onClick={() => setRolloverResult(null)}>✕</button>
+        </div>
+      )}
+
+      {/* Move warning dialog */}
+      {moveWarning && (
+        <div style={{ marginBottom: 10, padding: '10px 14px', borderRadius: 8, fontSize: '0.83rem',
+          background: '#fef2f2', border: '1px solid #fca5a5', color: '#dc2626' }}>
+          <div style={{ marginBottom: 8 }}>
+            <strong>{moveWarning.teamName}</strong> перегружена на <strong>{moveWarning.toDate}</strong>.
+            Чтобы перенести, освободи <strong>{moveWarning.overflowQty} шт.</strong> вручную.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-danger btn-sm"
+              onClick={() => handleMove(moveWarning.taskId, modeSource!.date, moveWarning.toDate, true)}>
+              Перенести всё равно
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setMoveWarning(null)}>
+              Отмена
+            </button>
+          </div>
         </div>
       )}
 

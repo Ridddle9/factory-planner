@@ -15,9 +15,16 @@ model Company {
   id        String   @id @default(cuid())
   inn       String   @unique
   name      String
+  syncToken String   @unique
   createdAt DateTime @default(now())
 
-  users User[]
+  users           User[]
+  workshops       Workshop[]
+  categories      ProductCategory[]
+  teams           Team[]
+  products        Product[]
+  orders          Order[]
+  categoryBlocks  CategoryBlock[]
 }
 
 // role: ADMIN | MEMBER
@@ -39,30 +46,59 @@ model User {
 // --- Справочники ---
 
 model Workshop {
-  id   String @id @default(cuid())
-  name String @unique // Участок сборки светильников и корпусов IP
+  id        String  @id @default(cuid())
+  name      String
+  companyId String
+  visible   Boolean @default(true)
 
+  company    Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
   categories ProductCategory[]
+
+  @@unique([name, companyId])
 }
 
 model ProductCategory {
-  id                    String   @id @default(cuid())
-  name                  String   @unique // СВЕТИЛЬНИКИ LUM (380 max)
-  capacityPerTeamPerDay Int      // Мощность на бригаду/день (220, 600...)
+  id                    String  @id @default(cuid())
+  name                  String
+  capacityPerTeamPerDay Int
   workshopId            String
-  workshop              Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+  companyId             String
+  visible               Boolean @default(true)
+
+  workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   teams    CategoryTeam[]
   products Product[]
+  blocks   CategoryBlock[]
+
+  @@unique([name, companyId])
+}
+
+// Блокировка категории на период (нет запчастей, плановый простой и т.п.)
+model CategoryBlock {
+  id         String   @id @default(cuid())
+  categoryId String
+  companyId  String
+  startDate  DateTime
+  endDate    DateTime
+  reason     String?
+
+  category ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  company  Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }
 
 model Team {
-  id   String @id @default(cuid())
-  name String @unique // Бригада №4 сборки светильников
+  id        String @id @default(cuid())
+  name      String
+  companyId String
 
+  company       Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
   categories    CategoryTeam[]
   dailyTasks    DailyTask[]
   dayCapacities TeamDayCapacity[]
+
+  @@unique([name, companyId])
 }
 
 // Корректировка мощности бригады на конкретный день
@@ -70,8 +106,8 @@ model TeamDayCapacity {
   id     String   @id @default(cuid())
   teamId String
   date   DateTime
-  factor Float    // 0.0–1.0, где 1.0 = полная мощность
-  note   String?  // Причина: "Вышло 6 из 10 человек"
+  factor Float
+  note   String?
 
   team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
@@ -89,56 +125,67 @@ model CategoryTeam {
 }
 
 model Product {
-  id          String   @id @default(cuid())
-  code        String   @unique // ЦБ-00010359
-  name        String   // Корпус светильника CSVT ЛПO...
-  categoryId  String
-  category    ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  id             String  @id @default(cuid())
+  code           String
+  name           String
+  categoryId     String
+  companyId      String
+  capacityPerDay Int?
+  capacityLocked Boolean @default(false)
 
+  category   ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  company    Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
   orderItems OrderItem[]
+
+  @@unique([code, companyId])
 }
 
 // --- Заказы ---
 
 model Order {
-  id            String   @id @default(cuid())
-  orderNumber   String   @unique // 00ЦБ-001213
-  customer      String   // ТД ЭЛЕКТРОТЕХМОНТАЖ, АО
-  description   String?  // Заказ клиента 00ЦБ-001213 от...
-  dueDate       DateTime? // Дата ограничения (жёсткий срок)
-  manager       String?  // _ФСК ЭТМ
-  paymentTerms  String?  // Рассрочка 60 к.дней
-  approvedAt    DateTime? // Дата согласования
-  replanCount   Int       @default(0) // Сколько раз перепланировался
+  id          String    @id @default(cuid())
+  orderNumber String
+  customer    String
+  description String?
+  dueDate     DateTime?
+  manager     String?
+  paymentTerms String?
+  approvedAt  DateTime?
+  replanCount Int       @default(0)
+  active      Boolean   @default(true)
+  companyId   String
+  orderRef    String?
 
-  items OrderItem[]
+  company Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  items   OrderItem[]
+
+  @@unique([orderRef, companyId])
 }
 
 model OrderItem {
-  id          String   @id @default(cuid())
+  id          String @id @default(cuid())
   orderId     String
   productId   String
-  quantity    Int      // Всего к производству
-  groupNumber Int?     // Номер группы (для маппинга на бригады)
+  quantity    Int
+  groupNumber Int?
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   dailyTasks DailyTask[]
-
-  // «К обеспечению» = quantity - SUM(dailyTasks.actualQuantity) — вычисляется
 }
 
 // --- План и факт ---
 
 model DailyTask {
-  id               String   @id @default(cuid())
-  orderItemId      String
-  teamId           String?
-  date             DateTime // День (дата без времени)
-  plannedQuantity  Int      @default(0) // План на день
-  actualQuantity   Int?     // Факт (вводит начальник цеха)
-  comment          String?  // Почему больше/меньше плана
+  id              String   @id @default(cuid())
+  orderItemId     String
+  teamId          String?
+  date            DateTime
+  plannedQuantity Int      @default(0)
+  actualQuantity  Int?
+  comment         String?
+  manuallyPlaced  Boolean  @default(false)
 
   orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
   team      Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)

@@ -5,10 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "ts-node src/index.ts",
+    "dev": "env $(cat .env | grep -v '^#' | xargs) ts-node src/index.ts",
     "build:backend": "tsc --project tsconfig.json",
     "build:frontend": "cd frontend && npm install && npm run build",
-    "build": "node scripts/use-postgresql.mjs && npx prisma generate && npm run build:frontend && npm run build:backend",
+    "build": "npx prisma generate && npm run build:frontend && npm run build:backend",
     "start": "npx prisma db push && NODE_ENV=production node dist/index.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",

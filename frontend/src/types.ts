@@ -17,6 +17,8 @@ export interface Product {
   name: string
   categoryId: string
   category?: ProductCategory
+  capacityPerDay?: number | null
+  capacityLocked?: boolean
 }
 
 export interface Team {
@@ -45,6 +47,14 @@ export interface OrderItem {
   remainingQuantity?: number
   order?: Order
   product?: Product
+}
+
+export interface CategoryBlock {
+  id: string
+  categoryId: string
+  startDate: string
+  endDate: string
+  reason: string | null
 }
 
 export interface TeamDayCapacity {

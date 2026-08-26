@@ -31,7 +31,7 @@ export default function Register() {
       setIsFirstUser(data.role === 'ADMIN')
       setSuccess(true)
       if (data.role === 'ADMIN') {
-        window.location.href = '/'
+        window.location.href = '/onboarding'
       }
     } catch {
       setError('Ошибка сети')

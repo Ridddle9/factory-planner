@@ -14,6 +14,14 @@ import DailyPlan from './pages/DailyPlan'
 import Schedule from './pages/Schedule'
 import Planning from './pages/Planning'
 import Import from './pages/Import'
+import Onboarding from './pages/Onboarding'
+
+function OnboardingRoute() {
+  const { user, loading } = useAuth()
+  if (loading) return null
+  if (!user) return <Navigate to="/login" replace />
+  return <Onboarding />
+}
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth()
@@ -58,6 +66,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<LoginGate />} />
           <Route path="/register" element={<RegisterGate />} />
+          <Route path="/onboarding" element={<OnboardingRoute />} />
           <Route path="/*" element={<ProtectedRoutes />} />
         </Routes>
       </div>
