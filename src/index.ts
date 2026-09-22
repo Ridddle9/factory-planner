@@ -287,26 +287,31 @@ async function calculateRemainingQuantity(orderItemId: string): Promise<number> 
 // Helper: вычислить загрузку бригады на дату в долях бригадо-дня (0.0–1.0+)
 // load = Σ(plannedQuantity / capacityPerDay) по всем задачам
 async function calculateTeamLoad(teamId: string, date: Date): Promise<number> {
-  const tasks = await prisma.dailyTask.findMany({
-    where: { teamId, date },
-    select: {
-      plannedQuantity: true,
-      orderItem: {
-        select: {
-          product: {
-            select: {
-              capacityPerDay: true,
-              category: { select: { capacityPerTeamPerDay: true } },
+  const [tasks, team] = await Promise.all([
+    prisma.dailyTask.findMany({
+      where: { teamId, date },
+      select: {
+        plannedQuantity: true,
+        orderItem: {
+          select: {
+            product: {
+              select: {
+                capacityPerDay: true,
+                category: { select: { capacityPerTeamPerDay: true } },
+              },
             },
           },
         },
       },
-    },
-  });
+    }),
+    prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true } }),
+  ]);
 
+  const headcount = team?.headcount ?? 1;
   return tasks.reduce((sum, task) => {
-    const cap = task.orderItem.product.capacityPerDay
+    const capPerPerson = task.orderItem.product.capacityPerDay
       ?? task.orderItem.product.category.capacityPerTeamPerDay;
+    const cap = capPerPerson * headcount;
     return sum + (cap > 0 ? task.plannedQuantity / cap : 0);
   }, 0);
 }
@@ -386,6 +391,7 @@ async function compactOrderItem(orderItemId: string, preserveDate?: Date): Promi
 // Helper: каскадный сдвиг вправо (после ручного переноса на раннюю дату)
 async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations = 60): Promise<number> {
   let movedCount = 0;
+  const teamHeadcount = (await prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true } }))?.headcount ?? 1;
 
   const processDay = async (date: Date, iteration: number): Promise<void> => {
     if (iteration > maxIterations) return;
@@ -401,7 +407,7 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
         orderItem: {
           include: {
             product: { include: { category: true } },
-            order: { select: { approvedAt: true } },
+            order: { select: { approvedAt: true, priority: true, raytecDate: true } },
           },
         },
       },
@@ -410,7 +416,7 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
 
     let totalLoad = 0;
     for (const t of tasks) {
-      const cap = t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay;
+      const cap = (t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
       totalLoad += cap > 0 ? t.plannedQuantity / cap : 0;
     }
     if (totalLoad <= effectiveFactor + 0.0001) return;
@@ -419,8 +425,14 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
     const shiftable = tasks.filter(t => !t.manuallyPlaced);
     if (shiftable.length === 0) return;
 
-    // Lowest priority first: latest approvedAt gets moved first
+    // Вытесняем наименее приоритетные первыми (высокий priority-номер = низкий приоритет)
     const sorted = [...shiftable].sort((a, b) => {
+      const pa = a.orderItem.order.priority ?? 20;
+      const pb = b.orderItem.order.priority ?? 20;
+      if (pa !== pb) return pb - pa;
+      const ra = a.orderItem.order.raytecDate?.getTime() ?? 0;
+      const rb = b.orderItem.order.raytecDate?.getTime() ?? 0;
+      if (ra !== rb) return rb - ra;
       const ta = a.orderItem.order.approvedAt?.getTime() ?? 0;
       const tb = b.orderItem.order.approvedAt?.getTime() ?? 0;
       return tb - ta;
@@ -431,7 +443,7 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
 
     for (const task of sorted) {
       if (excessLoad <= 0.0001) break;
-      const cap = task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay;
+      const cap = (task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
       const taskLoad = cap > 0 ? task.plannedQuantity / cap : 0;
 
       let moveQty: number;
@@ -481,6 +493,7 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
 // Helper: каскадный сдвиг влево (после ручного переноса на позднюю дату — подтягивает очередь вперёд)
 async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations = 60): Promise<number> {
   let movedCount = 0;
+  const teamHeadcount = (await prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true } }))?.headcount ?? 1;
 
   const processDay = async (date: Date, iteration: number): Promise<void> => {
     if (iteration > maxIterations) return;
@@ -501,7 +514,7 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
 
     let currentLoad = 0;
     for (const t of currentTasks) {
-      const cap = t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay;
+      const cap = (t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
       currentLoad += cap > 0 ? t.plannedQuantity / cap : 0;
     }
 
@@ -515,7 +528,7 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
         orderItem: {
           include: {
             product: { include: { category: true } },
-            order: { select: { approvedAt: true } },
+            order: { select: { approvedAt: true, priority: true, raytecDate: true } },
           },
         },
       },
@@ -527,8 +540,14 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
       return;
     }
 
-    // FIFO: earliest approvedAt fills the gap first
+    // Тянем наиболее приоритетные первыми (низкий priority-номер = высокий приоритет)
     const sorted = [...nextDayTasks].sort((a, b) => {
+      const pa = a.orderItem.order.priority ?? 20;
+      const pb = b.orderItem.order.priority ?? 20;
+      if (pa !== pb) return pa - pb;
+      const ra = a.orderItem.order.raytecDate?.getTime() ?? 0;
+      const rb = b.orderItem.order.raytecDate?.getTime() ?? 0;
+      if (ra !== rb) return ra - rb;
       const ta = a.orderItem.order.approvedAt?.getTime() ?? 0;
       const tb = b.orderItem.order.approvedAt?.getTime() ?? 0;
       return ta - tb;
@@ -538,7 +557,7 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
 
     for (const task of sorted) {
       if (freeLoad <= 0.0001) break;
-      const cap = task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay;
+      const cap = (task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
       const taskLoad = cap > 0 ? task.plannedQuantity / cap : 0;
 
       let pullQty: number;
@@ -600,8 +619,6 @@ async function autoPlanOrderItem(
   const { quantity } = orderItem;
   const capacityPerTeamPerDay = orderItem.product.capacityPerDay
     ?? orderItem.product.category.capacityPerTeamPerDay;
-  const dueDate = orderItem.order.dueDate; // may be null
-
   // Получаем доступные бригады для категории
   const availableTeamIds = await getAvailableTeamsForCategory(orderItem.product.categoryId, orderItem.order.companyId);
 
@@ -627,7 +644,6 @@ async function autoPlanOrderItem(
   let remaining = Math.max(0, quantity - (options?.reservedQty ?? 0));
   let overloaded = false;
 
-  // Планируем от текущей даты до dueDate (или дальше, если перегрузка)
   const maxDays = 365; // Защита от бесконечного цикла
   let daysPlanned = 0;
 
@@ -688,9 +704,12 @@ async function autoPlanOrderItem(
       where: { teamId_date: { teamId, date } },
     });
     const effectiveFraction = capOverride ? capOverride.factor : 1.0;
+    // Мощность бригады = на 1 человека × численность бригады
+    const teamHeadcount = (await prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true } }))?.headcount ?? 1;
+    const effectiveCapacity = capacityPerTeamPerDay * teamHeadcount;
     // Свободная ёмкость в штуках для текущей категории
     const availableFraction = Math.max(0, effectiveFraction - currentLoadFraction);
-    const available = Math.round(availableFraction * capacityPerTeamPerDay);
+    const available = Math.round(availableFraction * effectiveCapacity);
 
     // Планируем на этот день
     const plannedForDay = Math.min(remaining, available);
@@ -755,10 +774,6 @@ async function autoPlanOrderItem(
     currentDate.setDate(currentDate.getDate() + 1);
     daysPlanned++;
 
-    // Если прошли dueDate и ещё осталось - это перегрузка
-    if (dueDate && currentDate > dueDate && remaining > 0) {
-      overloaded = true;
-    }
   }
 
   if (remaining > 0) {
@@ -781,6 +796,15 @@ function parseCapacity(name: string): number {
   return parseInt((m[1] ?? m[2])!, 10);
 }
 
+function mapPriority(p?: string): number {
+  if (p === 'Критический') return 5;
+  if (p === 'Высокий')     return 10;
+  if (p === 'Средний')     return 20;
+  if (p === 'Низкий')      return 30;
+  return 20;
+}
+
+
 app.post("/sync/1c", async (req: Request, res: Response) => {
   const authHeader = req.headers["authorization"] as string | undefined;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -794,12 +818,12 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
   const companyId = syncCompany.id;
 
   const { orders, categories, teams, teamCategories, fact, capacity } = req.body as {
-    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; dueDate?: string; approvedAt?: string; description?: string; paymentTerms?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number }[] }[];
+    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number }[] }[];
     categories: { code: string; name: string; capacity?: number }[];
-    teams: { code: string; name: string; workshopName?: string }[];
+    teams: { code: string; name: string; workshopName?: string; headcount?: number }[];
     teamCategories: { categoryName: string; teamName: string; workshopName?: string }[];
-    fact: { orderNumber: string; productCode: string; totalProduced: number }[];
-    capacity?: { productCode: string; capacityPerDay: number }[];
+    fact: { orderNumber: string; productCode: string; remaining: number }[];
+    capacity?: { productCode: string; productName?: string; categoryName?: string; capacityPerDay: number }[];
   };
 
   const stats = { categories: 0, teams: 0, products: 0, orders: 0, orderItems: 0, categoryTeamLinks: 0, factRecords: 0, capacityRecords: 0 };
@@ -856,7 +880,7 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
   }
 
   // Если бригады не пришли отдельно — извлекаем уникальные имена из teamCategories
-  const teamsToProcess = (teams && teams.length > 0)
+  const teamsToProcess: { code: string; name: string; workshopName?: string; headcount?: number }[] = (teams && teams.length > 0)
     ? teams
     : [...new Set((teamCategories ?? []).map(tc => tc.teamName).filter(Boolean))].map(n => ({ code: n, name: n }));
 
@@ -873,8 +897,8 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
   for (const t of teamsToProcess) {
     const upserted = await prisma.team.upsert({
       where: { name_companyId: { name: t.name, companyId } },
-      update: {},
-      create: { name: t.name, companyId },
+      update: { headcount: t.headcount ?? 1 },
+      create: { name: t.name, companyId, headcount: t.headcount ?? 1 },
     });
     teamMap.set(t.name, upserted.id);
     stats.teams++;
@@ -897,6 +921,38 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
     });
   }
 
+  const todayMs = (() => {
+    const msk = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    msk.setUTCHours(0, 0, 0, 0);
+    return msk.getTime();
+  })();
+
+  // Факт обрабатывается ДО заказов: orderItem.quantity на этот момент = НеОбеспечен прошлого синка.
+  // Дельта = prevRemaining - currRemaining = сколько произвели с прошлого синка.
+  for (const factEntry of (fact ?? [])) {
+    const { orderNumber, productCode, remaining } = factEntry;
+    if (!orderNumber || !productCode || remaining == null) continue;
+
+    const order = await prisma.order.findFirst({ where: { orderNumber, companyId, active: true } });
+    if (!order) { factSkipped.noOrder++; continue; }
+
+    const product = await prisma.product.findUnique({ where: { code_companyId: { code: productCode, companyId } } });
+    if (!product) { factSkipped.noProduct++; continue; }
+
+    const orderItem = await prisma.orderItem.findFirst({ where: { orderId: order.id, productId: product.id } });
+    if (!orderItem) { factSkipped.noOrderItem++; continue; }
+
+    const todayDelta = Math.max(0, orderItem.quantity - Number(remaining));
+    if (todayDelta <= 0) continue;
+
+    await prisma.dailyTask.upsert({
+      where: { orderItemId_date: { orderItemId: orderItem.id, date: new Date(todayMs) } },
+      update: { actualQuantity: todayDelta },
+      create: { orderItemId: orderItem.id, date: new Date(todayMs), plannedQuantity: 0, actualQuantity: todayDelta },
+    });
+    stats.factRecords++;
+  }
+
   for (const orderData of (orders ?? [])) {
     const isActive = !orderData.status || ACTIVE_STATUSES.has(orderData.status);
     const ref = orderData.ref as string | undefined;
@@ -905,11 +961,12 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
       orderNumber: orderData.number,
       customer: orderData.customer,
       manager: orderData.manager ?? null,
-      dueDate: orderData.dueDate ? new Date(orderData.dueDate) : null,
       approvedAt: orderData.approvedAt ? new Date(orderData.approvedAt) : null,
       description: orderData.description ?? null,
       paymentTerms: orderData.paymentTerms ?? null,
       active: isActive,
+      priority: mapPriority(orderData.priority),
+      raytecDate: orderData.raytecDate ? new Date(orderData.raytecDate) : null,
     };
 
     const existing = ref
@@ -992,43 +1049,25 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
     }
   }
 
-  const todayMs = (() => {
-    // Use Moscow time (UTC+3) to determine the current calendar date
-    const msk = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    msk.setUTCHours(0, 0, 0, 0);
-    return msk.getTime();
-  })();
-
-  for (const factEntry of (fact ?? [])) {
-    const { orderNumber, productCode, totalProduced } = factEntry;
-    if (!orderNumber || !productCode || totalProduced == null) continue;
-
-    const order = await prisma.order.findFirst({ where: { orderNumber, companyId, active: true } });
-    if (!order) { factSkipped.noOrder++; continue; }
-
-    const product = await prisma.product.findUnique({ where: { code_companyId: { code: productCode, companyId } } });
-    if (!product) { factSkipped.noProduct++; continue; }
-
-    const orderItem = await prisma.orderItem.findFirst({ where: { orderId: order.id, productId: product.id } });
-    if (!orderItem) { factSkipped.noOrderItem++; continue; }
-
-    // Cumulative total from 1C; compute today's delta = totalProduced - sum of all previous days
-    const prevResult = await prisma.dailyTask.aggregate({
-      where: { orderItemId: orderItem.id, date: { lt: new Date(todayMs) } },
-      _sum: { actualQuantity: true },
-    });
-    const previousTotal = prevResult._sum.actualQuantity ?? 0;
-    const todayDelta = Math.max(0, Number(totalProduced) - previousTotal);
-
-    await prisma.dailyTask.upsert({
-      where: { orderItemId_date: { orderItemId: orderItem.id, date: new Date(todayMs) } },
-      update: { actualQuantity: todayDelta },
-      create: { orderItemId: orderItem.id, date: new Date(todayMs), plannedQuantity: 0, actualQuantity: todayDelta },
-    });
-    stats.factRecords++;
-  }
-
   for (const cap of (capacity ?? [])) {
+    if (!cap.productCode) continue;
+
+    // Upsert product from capacity data (covers products with no active orders)
+    const catName = cap.categoryName?.trim();
+    const prodName = cap.productName?.trim();
+    if (catName && prodName) {
+      const cat = await prisma.productCategory.upsert({
+        where: { name_companyId: { name: catName, companyId } },
+        update: {},
+        create: { name: catName, companyId, capacityPerTeamPerDay: 0, workshopId: defaultWorkshop.id },
+      });
+      await prisma.product.upsert({
+        where: { code_companyId: { code: cap.productCode, companyId } },
+        update: { name: prodName, categoryId: cat.id },
+        create: { code: cap.productCode, name: prodName, categoryId: cat.id, companyId },
+      });
+    }
+
     const updated = await prisma.product.updateMany({
       where: { code: cap.productCode, companyId, capacityLocked: false },
       data: { capacityPerDay: cap.capacityPerDay },
@@ -1097,18 +1136,11 @@ app.post("/onboarding/seed", requireAdmin, async (req: Request, res: Response) =
   });
 
   // Orders
-  const now = new Date();
-  const due1 = new Date(now);
-  due1.setDate(due1.getDate() + 10);
-  const due2 = new Date(now);
-  due2.setDate(due2.getDate() + 17);
-
   const order1 = await prisma.order.create({
     data: {
       orderNumber: "ЗК-001",
       customer: "ООО «Ромашка»",
       manager: "Иванов А.А.",
-      dueDate: due1,
       companyId: cid,
     },
   });
@@ -1117,7 +1149,6 @@ app.post("/onboarding/seed", requireAdmin, async (req: Request, res: Response) =
       orderNumber: "ЗК-002",
       customer: "ООО «Орион»",
       manager: "Петрова И.В.",
-      dueDate: due2,
       companyId: cid,
     },
   });
@@ -1200,12 +1231,21 @@ app.post("/order-items/plan-unplanned", async (req: Request, res: Response) => {
       order: { companyId: cid, active: true },
       product: { category: { visible: true, workshop: { visible: true } } },
     },
-    include: { dailyTasks: true, order: { select: { approvedAt: true, dueDate: true } } },
-    orderBy: { order: { approvedAt: "asc" } },
+    include: { dailyTasks: true, order: { select: { approvedAt: true, priority: true, raytecDate: true } } },
+    orderBy: [
+      { order: { priority: "asc" } },
+      { order: { raytecDate: "asc" } },
+      { order: { approvedAt: "asc" } },
+    ],
   });
 
   const unplanned = items.filter((item) => {
-    const done = item.dailyTasks.reduce((s, t) => s + (t.actualQuantity ?? 0), 0);
+    // Как у Raytec: "выполнено" — только то, что было явно запланировано и подтверждено.
+    // Факт-синк из 1С (plannedQuantity=0) не считается выполненным — это Зарезервировано,
+    // а не физически произведённый товар.
+    const done = item.dailyTasks
+      .filter((t) => t.plannedQuantity > 0 && t.actualQuantity !== null)
+      .reduce((s, t) => s + t.actualQuantity!, 0);
     const K = item.quantity - done;
     if (K <= 0) return false;
     const futurePlanned = item.dailyTasks
@@ -1676,18 +1716,26 @@ app.post("/teams", async (req: Request, res: Response) => {
 app.put("/teams/:id", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const id = req.params.id as string;
-  const { name } = req.body;
+  const { name, headcount } = req.body;
 
   if (name !== undefined) {
     if (!name || typeof name !== "string") {
       return res.status(400).json({ error: "name must be a non-empty string" });
     }
   }
+  if (headcount !== undefined) {
+    if (typeof headcount !== "number" || headcount < 1 || !Number.isInteger(headcount)) {
+      return res.status(400).json({ error: "headcount must be a positive integer" });
+    }
+  }
 
   try {
     const existing = await prisma.team.findFirst({ where: { id, companyId: cid } });
     if (!existing) { res.status(404).json({ error: "Team not found" }); return; }
-    const team = await prisma.team.update({ where: { id }, data: { name } });
+    const data: any = {};
+    if (name !== undefined) data.name = name;
+    if (headcount !== undefined) data.headcount = headcount;
+    const team = await prisma.team.update({ where: { id }, data });
     res.json(team);
   } catch (err) {
     res.status(404).json({ error: "Team not found" });
@@ -1726,7 +1774,6 @@ app.post("/orders", async (req: Request, res: Response) => {
     orderNumber,
     customer,
     description,
-    dueDate,
     manager,
     paymentTerms,
     approvedAt,
@@ -1745,7 +1792,6 @@ app.post("/orders", async (req: Request, res: Response) => {
         orderNumber,
         customer,
         description: description || null,
-        dueDate: dueDate ? new Date(dueDate) : null,
         manager: manager || null,
         paymentTerms: paymentTerms || null,
         approvedAt: approvedAt ? new Date(approvedAt) : null,
@@ -1766,7 +1812,6 @@ app.put("/orders/:id", async (req: Request, res: Response) => {
     orderNumber,
     customer,
     description,
-    dueDate,
     manager,
     paymentTerms,
     approvedAt,
@@ -1776,7 +1821,6 @@ app.put("/orders/:id", async (req: Request, res: Response) => {
     orderNumber?: string;
     customer?: string;
     description?: string | null;
-    dueDate?: Date | null;
     manager?: string | null;
     paymentTerms?: string | null;
     approvedAt?: Date | null;
@@ -1798,10 +1842,6 @@ app.put("/orders/:id", async (req: Request, res: Response) => {
 
   if (description !== undefined) {
     data.description = description === null || description === "" ? null : String(description);
-  }
-
-  if (dueDate !== undefined) {
-    data.dueDate = dueDate === null || dueDate === "" ? null : new Date(dueDate);
   }
 
   if (manager !== undefined) {
@@ -2371,6 +2411,19 @@ app.delete("/daily-tasks/:id", async (req: Request, res: Response) => {
   }
 });
 
+// --- Очистить весь график (только плановые задачи) ---
+
+app.delete("/daily-tasks", requireAuth, async (req: Request, res: Response) => {
+  const companyId = (req as any).user.companyId;
+  const { count } = await prisma.dailyTask.deleteMany({
+    where: {
+      plannedQuantity: { gt: 0 },
+      orderItem: { order: { companyId } },
+    },
+  });
+  res.json({ deleted: count });
+});
+
 // --- Разбить задачу на две части ---
 
 app.post("/daily-tasks/:id/split", async (req: Request, res: Response) => {
@@ -2482,8 +2535,8 @@ app.get("/daily-tasks/:id/move-suggestions", async (req: Request, res: Response)
       })
       .filter((oi) => oi.remainingQuantity > 0)
       .sort((a, b) => {
-        const da = a.order.dueDate ? new Date(a.order.dueDate).getTime() : Infinity;
-        const db = b.order.dueDate ? new Date(b.order.dueDate).getTime() : Infinity;
+        const da = a.order.approvedAt ? new Date(a.order.approvedAt).getTime() : Infinity;
+        const db = b.order.approvedAt ? new Date(b.order.approvedAt).getTime() : Infinity;
         return da - db;
       })
       .slice(0, 5);
@@ -3093,56 +3146,9 @@ app.post("/orders/:id/auto-plan", async (req: Request, res: Response) => {
 
 // --- Аналитика планирования ---
 
-// Перегрузка: задачи, которые не успеем к сроку
-app.get("/planning/overload", async (req: Request, res: Response) => {
-  const cid = req.user!.companyId;
-  const dateFromStr = req.query.dateFrom as string | undefined;
-  const dateToStr = req.query.dateTo as string | undefined;
-
-  const dateFrom = dateFromStr ? new Date(dateFromStr) : new Date();
-  const dateTo = dateToStr ? new Date(dateToStr) : null;
-
-  const where: any = {
-    orderItem: {
-      order: {
-        dueDate: { not: null },
-        companyId: cid,
-      },
-    },
-  };
-
-  if (dateTo) {
-    where.date = { gte: dateFrom, lte: dateTo };
-  } else {
-    where.date = { gte: dateFrom };
-  }
-
-  const tasks = await prisma.dailyTask.findMany({
-    where,
-    include: {
-      orderItem: {
-        include: {
-          order: true,
-          product: { include: { category: { include: { workshop: true } } } },
-        },
-      },
-      team: true,
-    },
-  });
-
-  // Фильтруем задачи, которые после dueDate
-  const overloaded = tasks.filter((task) => {
-    const dueDate = task.orderItem.order.dueDate;
-    if (!dueDate) return false;
-    const taskDate = new Date(task.date);
-    const due = new Date(dueDate);
-    return taskDate > due;
-  });
-
-  res.json({
-    count: overloaded.length,
-    tasks: overloaded,
-  });
+// Перегрузка: задачи после срока (концепция убрана вместе с dueDate)
+app.get("/planning/overload", async (_req: Request, res: Response) => {
+  res.json({ count: 0, tasks: [] });
 });
 
 // Недогрузка: бригады, загруженные менее чем на 100%
@@ -3367,20 +3373,13 @@ app.get("/planning/team-load", async (req: Request, res: Response) => {
   });
 });
 
-// Аналитика по заказам: что успевается к сроку, что нет
+// Аналитика по заказам: что успевается к сроку, что нет (dueDate удалён)
 app.get("/planning/orders-status", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const orderId = req.query.orderId as string | undefined;
 
-  const where: any = {
-    dueDate: { not: null },
-    companyId: cid,
-    active: true,
-  };
-
-  if (orderId) {
-    where.id = orderId;
-  }
+  const where: any = { companyId: cid, active: true };
+  if (orderId) where.id = orderId;
 
   const orders = await prisma.order.findMany({
     where,
@@ -3388,132 +3387,24 @@ app.get("/planning/orders-status", async (req: Request, res: Response) => {
       items: {
         include: {
           product: { include: { category: true } },
-          dailyTasks: {
-            orderBy: { date: "asc" },
-          },
+          dailyTasks: { orderBy: { date: "asc" } },
         },
       },
     },
-    orderBy: { dueDate: "asc" },
+    orderBy: { approvedAt: "asc" },
   });
 
-  const ordersStatus = await Promise.all(
-    orders.map(async (order) => {
-      if (!order.dueDate) {
-        return {
-          orderId: order.id,
-          orderNumber: order.orderNumber,
-          customer: order.customer,
-          dueDate: null,
-          status: "no_due_date",
-          message: "Order has no due date",
-          items: [],
-        };
-      }
-
-      const dueDate = new Date(order.dueDate);
-      dueDate.setHours(23, 59, 59, 999); // Конец дня
-
-      const itemsStatus = await Promise.all(
-        order.items.map(async (item) => {
-          // Проверяем все задачи позиции
-          const tasksAfterDue = item.dailyTasks.filter((task) => {
-            const taskDate = new Date(task.date);
-            return taskDate > dueDate;
-          });
-
-          // Считаем, сколько уже запланировано до срока и после
-          const plannedBeforeDue = item.dailyTasks
-            .filter((task) => {
-              const taskDate = new Date(task.date);
-              return taskDate <= dueDate;
-            })
-            .reduce((sum, task) => sum + task.plannedQuantity, 0);
-
-          const plannedAfterDue = tasksAfterDue.reduce(
-            (sum, task) => sum + task.plannedQuantity,
-            0
-          );
-
-          const totalPlanned = plannedBeforeDue + plannedAfterDue;
-          const remaining = item.quantity - totalPlanned;
-
-          // Статус позиции
-          let status: "on_time" | "overdue" | "not_planned" | "partial";
-          let message: string;
-
-          if (totalPlanned === 0) {
-            status = "not_planned";
-            message = "Not planned yet";
-          } else if (plannedAfterDue > 0 || remaining > 0) {
-            if (plannedAfterDue > 0 && remaining > 0) {
-              status = "overdue";
-              message = `Partially planned, ${plannedAfterDue} after due date, ${remaining} not planned`;
-            } else if (plannedAfterDue > 0) {
-              status = "overdue";
-              message = `${plannedAfterDue} items planned after due date`;
-            } else {
-              status = "partial";
-              message = `${remaining} items not planned yet`;
-            }
-          } else {
-            status = "on_time";
-            message = "All items planned before due date";
-          }
-
-          return {
-            orderItemId: item.id,
-            productCode: item.product.code,
-            productName: item.product.name,
-            quantity: item.quantity,
-            plannedBeforeDue,
-            plannedAfterDue,
-            totalPlanned,
-            remaining,
-            status,
-            message,
-            tasksAfterDue: tasksAfterDue.map((task) => ({
-              taskId: task.id,
-              date: task.date,
-              plannedQuantity: task.plannedQuantity,
-            })),
-          };
-        })
-      );
-
-      // Статус заказа: если хотя бы одна позиция не успевает - заказ не успевает
-      const hasOverdue = itemsStatus.some((item) => item.status === "overdue");
-      const hasNotPlanned = itemsStatus.some((item) => item.status === "not_planned");
-      const hasPartial = itemsStatus.some((item) => item.status === "partial");
-
-      let orderStatus: "on_time" | "overdue" | "not_planned" | "partial";
-      let orderMessage: string;
-
-      if (hasNotPlanned) {
-        orderStatus = "not_planned";
-        orderMessage = "Some items are not planned";
-      } else if (hasOverdue) {
-        orderStatus = "overdue";
-        orderMessage = "Some items are planned after due date";
-      } else if (hasPartial) {
-        orderStatus = "partial";
-        orderMessage = "Some items are partially planned";
-      } else {
-        orderStatus = "on_time";
-        orderMessage = "All items are planned and will be ready on time";
-      }
-
-      return {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        customer: order.customer,
-        dueDate: order.dueDate,
-        status: orderStatus,
-        message: orderMessage,
-        items: itemsStatus,
-      };
-    })
-  );
+  const ordersStatus = orders.map((order) => {
+    const itemsStatus = order.items.map((item) => {
+      const totalPlanned = item.dailyTasks.reduce((s, t) => s + t.plannedQuantity, 0);
+      const remaining = item.quantity - totalPlanned;
+      const status = totalPlanned === 0 ? "not_planned" : remaining > 0 ? "partial" : "on_time";
+      return { orderItemId: item.id, productCode: item.product.code, productName: item.product.name, quantity: item.quantity, totalPlanned, remaining, status };
+    });
+    const status = itemsStatus.some(i => i.status === "not_planned") ? "not_planned"
+      : itemsStatus.some(i => i.status === "partial") ? "partial" : "on_time";
+    return { orderId: order.id, orderNumber: order.orderNumber, customer: order.customer, status, items: itemsStatus };
+  });
 
   res.json({
     count: ordersStatus.length,
@@ -3546,10 +3437,6 @@ app.post("/orders/:id/replan", async (req: Request, res: Response) => {
 
     if (!order) {
       return res.status(404).json({ error: "Order not found" });
-    }
-
-    if (!order.dueDate) {
-      return res.status(400).json({ error: "Order must have dueDate for replanning" });
     }
 
     const orderWithItems = order as typeof order & {
@@ -4244,7 +4131,7 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
     include: {
       orderItem: {
         include: {
-          order: { select: { id: true, orderNumber: true, customer: true, dueDate: true, approvedAt: true } },
+          order: { select: { id: true, orderNumber: true, customer: true, approvedAt: true } },
           product: { include: { category: true } },
         },
       },
@@ -4276,7 +4163,7 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
   };
   type OrderData = {
     orderNumber: string; customer: string;
-    dueDate: Date | null; approvedAt: Date | null;
+    approvedAt: Date | null;
     items: Map<string, ItemData>;
   };
   const orderMap = new Map<string, OrderData>();
@@ -4287,7 +4174,6 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
       orderMap.set(oid, {
         orderNumber: t.orderItem.order.orderNumber,
         customer: t.orderItem.order.customer,
-        dueDate: t.orderItem.order.dueDate,
         approvedAt: t.orderItem.order.approvedAt,
         items: new Map(),
       });
@@ -4317,7 +4203,7 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
   );
 
   // Build AOA (array of arrays)
-  const FIXED_COLS = ["Заказ", "Клиент", "Срок", "Артикул", "Товар", "Категория", "Бригада", "Итого план", "Итого факт"];
+  const FIXED_COLS = ["Заказ", "Клиент", "Артикул", "Товар", "Категория", "Бригада", "Итого план", "Итого факт"];
   const dateHeaders = isoDates.map(fmtShort);
   const aoa: (string | number)[][] = [[...FIXED_COLS, ...dateHeaders]];
 
@@ -4325,7 +4211,7 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
   const orderRowIndexes: number[] = [];
 
   const unplannedRows: (string | number)[][] = [
-    ["Заказ", "Клиент", "Срок", "Артикул", "Товар", "Категория", "Итого факт"],
+    ["Заказ", "Клиент", "Артикул", "Товар", "Категория", "Итого факт"],
   ];
 
   for (const order of sortedOrders) {
@@ -4335,7 +4221,7 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
     // Unplanned actuals → separate sheet
     for (const item of unplannedItems) {
       unplannedRows.push([
-        order.orderNumber, order.customer, fmtFull(order.dueDate),
+        order.orderNumber, order.customer,
         item.productCode, item.productName, item.categoryName, item.totalActual,
       ]);
     }
@@ -4346,14 +4232,13 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
     aoa.push([
       order.orderNumber,
       order.customer,
-      fmtFull(order.dueDate),
       "", "", "", "", "", "",
       ...isoDates.map(() => "" as string | number),
     ]);
     for (const item of plannedItems) {
       const totalPlan = Array.from(item.byDate.values()).reduce((s, v) => s + v, 0);
       aoa.push([
-        "", "", "",
+        "", "",
         item.productCode,
         item.productName,
         item.categoryName,
@@ -4367,14 +4252,14 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-  // Merge Заказ / Клиент / Срок across all product rows of each order
+  // Merge Заказ / Клиент across all product rows of each order
   const merges: XLSX.Range[] = [];
   for (let i = 0; i < orderRowIndexes.length; i++) {
     const startRow = orderRowIndexes[i] as number;
     const nextStart = orderRowIndexes[i + 1] as number | undefined;
     const endRow = nextStart !== undefined ? nextStart - 1 : aoa.length - 1;
     if (endRow > startRow) {
-      for (const col of [0, 1, 2]) {
+      for (const col of [0, 1]) {
         merges.push({ s: { r: startRow, c: col }, e: { r: endRow, c: col } });
       }
     }
@@ -4383,20 +4268,20 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
 
   // Column widths
   ws["!cols"] = [
-    { wch: 20 }, { wch: 24 }, { wch: 12 },
+    { wch: 20 }, { wch: 24 },
     { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 14 },
     { wch: 11 }, { wch: 11 },
     ...isoDates.map(() => ({ wch: 7 })),
   ];
 
-  // Freeze header row + first 3 info columns
-  ws["!sheetViews"] = [{ state: "frozen", xSplit: 3, ySplit: 1, topLeftCell: "D2" }];
+  // Freeze header row + first 2 info columns
+  ws["!sheetViews"] = [{ state: "frozen", xSplit: 2, ySplit: 1, topLeftCell: "C2" }];
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "План производства");
   if (unplannedRows.length > 1) {
     const wsU = XLSX.utils.aoa_to_sheet(unplannedRows);
-    wsU["!cols"] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 12 }];
+    wsU["!cols"] = [{ wch: 20 }, { wch: 24 }, { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, wsU, "Незапланированный факт");
   }
 
@@ -4497,6 +4382,7 @@ app.get("/planning/orders-completion", async (req: Request, res: Response) => {
         include: {
           product: { include: { category: true } },
           dailyTasks: {
+            where: { plannedQuantity: { gt: 0 } },
             orderBy: { date: "desc" },
             take: 1,
           },
@@ -4552,7 +4438,6 @@ app.get("/planning/orders-completion", async (req: Request, res: Response) => {
         customer: order.customer,
         manager: order.manager,
         approvedAt: order.approvedAt,
-        dueDate: order.dueDate,
         totalItems: order.items.length,
         unplannedItems,
         totalQuantity,
@@ -4741,7 +4626,7 @@ app.get("/planning/unplanned-production", async (req: Request, res: Response) =>
       orderItem: {
         include: {
           product: { include: { category: { select: { id: true, name: true } } } },
-          order: { select: { orderNumber: true, customer: true, dueDate: true } },
+          order: { select: { orderNumber: true, customer: true } },
         },
       },
     },
@@ -4752,7 +4637,6 @@ app.get("/planning/unplanned-production", async (req: Request, res: Response) =>
     taskId: t.id,
     orderNumber: t.orderItem.order.orderNumber,
     customer: t.orderItem.order.customer,
-    dueDate: t.orderItem.order.dueDate,
     productCode: t.orderItem.product.code,
     productName: t.orderItem.product.name,
     categoryName: t.orderItem.product.category?.name ?? null,

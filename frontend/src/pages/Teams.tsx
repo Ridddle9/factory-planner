@@ -24,6 +24,7 @@ export default function Teams() {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Team | null>(null)
   const [formName, setFormName] = useState('')
+  const [formHeadcount, setFormHeadcount] = useState(1)
   const [saving, setSaving] = useState(false)
 
   // Capacity section
@@ -54,20 +55,20 @@ export default function Teams() {
 
   useEffect(() => { load(); loadCapacities() }, [])
 
-  const openCreate = () => { setShowForm(true); setEditing(null); setFormName('') }
-  const openEdit = (t: Team) => { setEditing(t); setFormName(t.name) }
+  const openCreate = () => { setShowForm(true); setEditing(null); setFormName(''); setFormHeadcount(1) }
+  const openEdit = (t: Team) => { setEditing(t); setFormName(t.name); setFormHeadcount(t.headcount) }
 
   const save = async () => {
     if (!formName.trim()) return
     setSaving(true)
     if (editing) {
-      const { error: e } = await api.put(`/teams/${editing.id}`, { name: formName.trim() })
+      const { error: e } = await api.put(`/teams/${editing.id}`, { name: formName.trim(), headcount: formHeadcount })
       if (e) setError(e)
       else { setEditing(null); setShowForm(false); load() }
     } else {
-      const { error: e } = await api.post('/teams', { name: formName.trim() })
+      const { error: e } = await api.post('/teams', { name: formName.trim(), headcount: formHeadcount })
       if (e) setError(e)
-      else { setFormName(''); setShowForm(false); load() }
+      else { setFormName(''); setFormHeadcount(1); setShowForm(false); load() }
     }
     setSaving(false)
   }
@@ -199,9 +200,11 @@ export default function Teams() {
           <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
             <label>Название</label>
             <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Бригада №..." />
+            <label>Количество людей</label>
+            <input type="number" min={1} value={formHeadcount} onChange={e => setFormHeadcount(Math.max(1, Number(e.target.value) || 1))} />
             <div className="form-actions">
               <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>{editing ? 'Сохранить' : 'Создать'}</button>
-              <button type="button" className="btn btn-secondary" onClick={() => { setShowForm(false); setEditing(null); setFormName('') }}>Отмена</button>
+              <button type="button" className="btn btn-secondary" onClick={() => { setShowForm(false); setEditing(null); setFormName(''); setFormHeadcount(1) }}>Отмена</button>
             </div>
           </div>
         )}
@@ -212,6 +215,7 @@ export default function Teams() {
             <thead>
               <tr>
                 <th>Название</th>
+                <th style={{ width: 80, textAlign: 'center' }}>Людей</th>
                 <th style={{ width: 140 }}></th>
               </tr>
             </thead>
@@ -219,6 +223,7 @@ export default function Teams() {
               {list.map(t => (
                 <tr key={t.id}>
                   <td>{t.name}</td>
+                  <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{t.headcount}</td>
                   <td>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openEdit(t)}>Изменить</button>
                     {' '}

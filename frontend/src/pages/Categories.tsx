@@ -212,7 +212,6 @@ export default function Categories() {
               <tr>
                 <th>Название</th>
                 <th>Участок</th>
-                <th title="Фолбэк — используется только если у продукта нет мощности из маршрутизации 1С">Мощность по умолч.</th>
                 <th style={{ width: 220 }}></th>
               </tr>
             </thead>
@@ -221,7 +220,6 @@ export default function Categories() {
                 <tr key={c.id}>
                   <td>{c.name}</td>
                   <td>{c.workshop?.name ?? '—'}</td>
-                  <td>{c.capacityPerTeamPerDay}</td>
                   <td>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openTeams(c.id)}>Бригады</button>
                     {' '}

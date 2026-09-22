@@ -24,6 +24,7 @@ export interface Product {
 export interface Team {
   id: string
   name: string
+  headcount: number
 }
 
 export interface Order {
@@ -31,10 +32,11 @@ export interface Order {
   orderNumber: string
   customer: string
   description: string | null
-  dueDate: string | null
   manager: string | null
   paymentTerms: string | null
   approvedAt: string | null
+  priority: number
+  raytecDate: string | null
   items?: OrderItem[]
 }
 

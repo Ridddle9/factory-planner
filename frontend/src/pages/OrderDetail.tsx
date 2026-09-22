@@ -11,7 +11,7 @@ export default function OrderDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editingOrder, setEditingOrder] = useState(false)
-  const [orderForm, setOrderForm] = useState({ orderNumber: '', customer: '', description: '', dueDate: '', manager: '', paymentTerms: '' })
+  const [orderForm, setOrderForm] = useState({ orderNumber: '', customer: '', description: '', manager: '', paymentTerms: '' })
   const [itemForm, setItemForm] = useState({ productId: '', quantity: 1 })
   const [showItemForm, setShowItemForm] = useState(false)
   const [editingItem, setEditingItem] = useState<OrderItem | null>(null)
@@ -37,7 +37,6 @@ export default function OrderDetail() {
         orderNumber: ord.orderNumber,
         customer: ord.customer,
         description: ord.description ?? '',
-        dueDate: ord.dueDate ? ord.dueDate.slice(0, 10) : '',
         manager: ord.manager ?? '',
         paymentTerms: ord.paymentTerms ?? '',
       })
@@ -58,7 +57,6 @@ export default function OrderDetail() {
       orderNumber: orderForm.orderNumber.trim(),
       customer: orderForm.customer.trim(),
       description: orderForm.description.trim() || null,
-      dueDate: orderForm.dueDate ? new Date(orderForm.dueDate).toISOString() : null,
       manager: orderForm.manager.trim() || null,
       paymentTerms: orderForm.paymentTerms.trim() || null,
     }
@@ -176,7 +174,6 @@ export default function OrderDetail() {
         {!editingOrder ? (
           <>
             <p><strong>Клиент:</strong> {order.customer}</p>
-            <p><strong>Срок:</strong> {order.dueDate ? new Date(order.dueDate).toLocaleDateString('ru-RU') : '—'}</p>
             <p><strong>Менеджер:</strong> {order.manager ?? '—'}</p>
             {order.description && <p><strong>Описание:</strong> {order.description}</p>}
             <button type="button" className="btn btn-secondary" onClick={() => setEditingOrder(true)}>Изменить заказ</button>
@@ -189,8 +186,6 @@ export default function OrderDetail() {
             <input value={orderForm.customer} onChange={e => setOrderForm(f => ({ ...f, customer: e.target.value }))} />
             <label>Описание</label>
             <textarea value={orderForm.description} onChange={e => setOrderForm(f => ({ ...f, description: e.target.value }))} />
-            <label>Срок поставки</label>
-            <input type="date" value={orderForm.dueDate} onChange={e => setOrderForm(f => ({ ...f, dueDate: e.target.value }))} />
             <label>Менеджер</label>
             <input value={orderForm.manager} onChange={e => setOrderForm(f => ({ ...f, manager: e.target.value }))} />
             <label>Условия оплаты</label>
@@ -217,12 +212,12 @@ export default function OrderDetail() {
           <button type="button" className="btn btn-primary" onClick={autoPlanOrder} disabled={items.length === 0 || autoPlanning} title="Нужны: срок поставки у заказа и назначенные бригады у категории товара (Справочники → Категории → Бригады)">
             {autoPlanning ? 'Планирование…' : 'Автоплан по заказу'}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={replanOrder} disabled={items.length === 0 || !order?.dueDate || replanning} title="Удалить старые задачи и перепланировать заказ с учётом текущей загрузки">
+          <button type="button" className="btn btn-secondary" onClick={replanOrder} disabled={items.length === 0 || replanning} title="Удалить старые задачи и перепланировать заказ с учётом текущей загрузки">
             {replanning ? 'Перепланирование…' : 'Перепланировать заказ'}
           </button>
         </div>
         <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#666' }}>
-          Автоплан: нужны <strong>срок поставки</strong> и <strong>бригады у категории</strong> (Справочники → Категории → «Бригады»). Перепланирование удаляет старые задачи и заново распределяет позиции с учётом загрузки.
+          Автоплан: нужны <strong>бригады у категории</strong> (Справочники → Категории → «Бригады»). Перепланирование удаляет старые задачи и заново распределяет позиции с учётом загрузки.
         </p>
         {(showItemForm || editingItem) && (
           <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>

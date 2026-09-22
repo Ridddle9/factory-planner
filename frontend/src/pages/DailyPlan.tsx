@@ -8,7 +8,7 @@ function todayISO() {
 
 type MoveSuggestion = OrderItem & {
   remainingQuantity: number
-  order?: { orderNumber: string; dueDate: string | null }
+  order?: { orderNumber: string }
   product?: { code: string; name: string }
 }
 
@@ -312,7 +312,6 @@ export default function DailyPlan() {
               <div key={s.id} style={{ background: '#fff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '0.4rem 0.75rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span>
                   <strong>{s.product?.code}</strong> · {s.order?.orderNumber} · осталось: <strong>{s.remainingQuantity}</strong>
-                  {s.order?.dueDate && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>срок {s.order.dueDate.slice(0, 10)}</span>}
                 </span>
                 <button className="btn btn-primary btn-sm" onClick={() => createFromSuggestion(s)} disabled={saving}>
                   Поставить

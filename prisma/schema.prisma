@@ -91,6 +91,7 @@ model CategoryBlock {
 model Team {
   id        String @id @default(cuid())
   name      String
+  headcount Int    @default(1)
   companyId String
 
   company       Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -147,7 +148,6 @@ model Order {
   orderNumber String
   customer    String
   description String?
-  dueDate     DateTime?
   manager     String?
   paymentTerms String?
   approvedAt  DateTime?
@@ -155,6 +155,8 @@ model Order {
   active      Boolean   @default(true)
   companyId   String
   orderRef    String?
+  priority    Int       @default(20)
+  raytecDate  DateTime?
 
   company Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   items   OrderItem[]

@@ -19,7 +19,6 @@ export default function Orders() {
     orderNumber: '',
     customer: '',
     description: '',
-    dueDate: '',
     manager: '',
     paymentTerms: '',
   })
@@ -46,7 +45,7 @@ export default function Orders() {
 
   const openCreate = () => {
     setShowForm(true)
-    setForm({ orderNumber: '', customer: '', description: '', dueDate: '', manager: '', paymentTerms: '' })
+    setForm({ orderNumber: '', customer: '', description: '', manager: '', paymentTerms: '' })
   }
 
   const save = async () => {
@@ -57,7 +56,6 @@ export default function Orders() {
       customer: form.customer.trim(),
     }
     if (form.description.trim()) body.description = form.description.trim()
-    if (form.dueDate) body.dueDate = new Date(form.dueDate).toISOString()
     if (form.manager.trim()) body.manager = form.manager.trim()
     if (form.paymentTerms.trim()) body.paymentTerms = form.paymentTerms.trim()
     const { error: e } = await api.post('/orders', body)
@@ -78,6 +76,13 @@ export default function Orders() {
   const formatDate = (s: string | null) => {
     if (!s) return '—'
     return new Date(s).toLocaleDateString('ru-RU')
+  }
+
+  const priorityLabel = (p: number) => {
+    if (p <= 5)  return { text: 'Критический', color: '#dc2626' }
+    if (p <= 10) return { text: 'Высокий',     color: '#ea580c' }
+    if (p <= 20) return { text: 'Средний',      color: 'var(--text-muted)' }
+    return              { text: 'Низкий',       color: 'var(--text-muted)', opacity: 0.6 }
   }
 
   const isDone = (id: string) => (completion[id]?.completionPct ?? 0) >= 100
@@ -129,8 +134,6 @@ export default function Orders() {
             <input value={form.customer} onChange={e => setForm(f => ({ ...f, customer: e.target.value }))} placeholder="Клиент" />
             <label>Описание</label>
             <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Описание" />
-            <label>Срок поставки</label>
-            <input type="date" value={form.dueDate} onChange={e => setForm(f => ({ ...f, dueDate: e.target.value }))} />
             <label>Менеджер</label>
             <input value={form.manager} onChange={e => setForm(f => ({ ...f, manager: e.target.value }))} placeholder="Менеджер" />
             <label>Условия оплаты</label>
@@ -152,8 +155,8 @@ export default function Orders() {
               <tr>
                 <th>Номер</th>
                 <th>Клиент</th>
-                <th>Срок договора</th>
                 {tab === 'active' && <th>Готово по плану</th>}
+                <th>Приоритет</th>
                 <th>Менеджер</th>
                 <th>Позиций</th>
                 <th style={{ width: 100 }}></th>
@@ -163,18 +166,18 @@ export default function Orders() {
               {shown.map(o => {
                 const info = completion[o.id]
                 const expected = info?.expectedCompletionDate ?? null
-                const isLate = o.dueDate && expected && expected > o.dueDate
                 return (
                   <tr key={o.id}>
                     <td><Link to={`/orders/${o.id}`}>{o.orderNumber}</Link></td>
                     <td>{o.customer}</td>
-                    <td>{formatDate(o.dueDate)}</td>
                     {tab === 'active' && (
-                      <td style={{ color: isLate ? '#dc2626' : expected ? '#16a34a' : 'var(--text-muted)', fontWeight: expected ? 600 : undefined }}>
+                      <td style={{ color: expected ? '#16a34a' : 'var(--text-muted)', fontWeight: expected ? 600 : undefined }}>
                         {expected ? formatDate(expected) : '—'}
-                        {isLate && <span style={{ marginLeft: 6, fontSize: '0.75rem', fontWeight: 400 }}>⚠ просрочка</span>}
                       </td>
                     )}
+                    <td>
+                      {(() => { const pl = priorityLabel(o.priority ?? 20); return <span style={{ color: pl.color, fontSize: '0.82rem', fontWeight: 600 }}>{pl.text}</span> })()}
+                    </td>
                     <td>{o.manager ?? '—'}</td>
                     <td>{o.items?.length ?? 0}</td>
                     <td>

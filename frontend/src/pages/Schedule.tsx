@@ -290,11 +290,14 @@ export default function Schedule() {
         comment: task.comment,
       }
     }
-    return Array.from(map.values()).sort((a, b) => {
-      if (a.workshopName !== b.workshopName) return a.workshopName.localeCompare(b.workshopName, 'ru')
-      if (a.teamName !== b.teamName) return a.teamName.localeCompare(b.teamName, 'ru')
-      return a.productCode.localeCompare(b.productCode, 'ru')
-    })
+    return Array.from(map.values())
+      .filter(row => Object.values(row.cells).some(c => c.plannedQuantity > 0))
+      .sort((a, b) => {
+        if (a.workshopName !== b.workshopName) return a.workshopName.localeCompare(b.workshopName, 'ru')
+        if (a.teamName !== b.teamName) return a.teamName.localeCompare(b.teamName, 'ru')
+        if (a.orderNumber !== b.orderNumber) return a.orderNumber.localeCompare(b.orderNumber, 'ru', { numeric: true })
+        return a.productCode.localeCompare(b.productCode, 'ru')
+      })
   }, [tasks])
 
   // Per-date load for header bar (fractional model)
@@ -514,6 +517,14 @@ export default function Schedule() {
     loadPlan()
   }
 
+  const handleClearSchedule = async () => {
+    if (!confirm('Очистить весь график? Все запланированные задачи будут удалены. Факт-записи останутся.')) return
+    setSaving(true)
+    await api.delete('/daily-tasks')
+    setSaving(false)
+    loadPlan()
+  }
+
   const handleUndo = async () => {
     if (!undoAction) return
     setSaving(true)
@@ -550,6 +561,9 @@ export default function Schedule() {
         </button>
         <button type="button" className="btn btn-secondary btn-sm" onClick={replanQueue} disabled={replanning || planningUnplanned || saving}>
           {replanning ? 'Перепланирую...' : 'Перепланировать очередь'}
+        </button>
+        <button type="button" className="btn btn-danger btn-sm" onClick={handleClearSchedule} disabled={saving || planningUnplanned || replanning}>
+          Очистить график
         </button>
         <button type="button" className="btn btn-secondary btn-sm" onClick={fetchNoTeamCategories} disabled={loadingNoTeam}>
           {loadingNoTeam ? 'Загрузка...' : noTeamCategories !== null ? 'Скрыть список' : 'Категории без бригад'}

@@ -8,7 +8,6 @@ interface OrderCompletion {
   customer: string
   manager: string | null
   approvedAt: string | null
-  dueDate: string | null
   totalItems: number
   unplannedItems: number
   totalQuantity: number
@@ -96,7 +95,7 @@ export default function Planning() {
   const [factDayData, setFactDayData] = useState<{ date: string; taskCount: number; teams: FactDayTeam[] } | null>(null)
 
   interface UnplannedItem {
-    taskId: string; orderNumber: string; customer: string; dueDate: string | null
+    taskId: string; orderNumber: string; customer: string
     productCode: string; productName: string; categoryName: string | null; actualQuantity: number
   }
   const [unplannedData, setUnplannedData] = useState<{ date: string | null; count: number; items: UnplannedItem[] } | null>(null)
@@ -172,12 +171,11 @@ export default function Planning() {
 
   // ── Перегрузка: группировка по заказу ────────────────────────────
   const overloadByOrder = useMemo(() => {
-    const map = new Map<string, { orderNumber: string; dueDate: string | null; tasks: DailyTask[] }>()
+    const map = new Map<string, { orderNumber: string; tasks: DailyTask[] }>()
     for (const t of overloadTasks) {
       const orderId = t.orderItem?.order?.orderNumber ?? '—'
       if (!map.has(orderId)) map.set(orderId, {
         orderNumber: t.orderItem?.order?.orderNumber ?? '—',
-        dueDate: t.orderItem?.order?.dueDate ?? null,
         tasks: [],
       })
       map.get(orderId)!.tasks.push(t)
@@ -377,55 +375,38 @@ export default function Planning() {
                 <div className="empty">Нет перегруженных задач за период.</div>
               ) : (
                 <div>
-                  {overloadByOrder.map(group => {
-                    const latestDate = group.tasks.reduce((m, t) => t.date > m ? t.date : m, '')
-                    const overDays = group.dueDate ? daysDiff(latestDate.slice(0, 10), group.dueDate.slice(0, 10)) : null
-                    return (
-                      <div key={group.orderNumber} style={{ marginBottom: '1rem' }}>
-                        <div style={{
-                          display: 'flex', alignItems: 'center', gap: 10,
-                          background: '#fef2f2', border: '1px solid #fecaca',
-                          borderRadius: '6px 6px 0 0', padding: '6px 12px',
-                        }}>
-                          <span style={{ fontWeight: 700 }}>{group.orderNumber}</span>
-                          {group.dueDate && (
-                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>срок: {formatDateFull(group.dueDate)}</span>
-                          )}
-                          {overDays !== null && overDays > 0 && (
-                            <span className="badge badge-danger">+{overDays} дн.</span>
-                          )}
-                          <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: 'var(--text-muted)' }}>{group.tasks.length} задач</span>
-                        </div>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', borderTop: 'none' }}>
-                          <thead>
-                            <tr style={{ background: '#fff5f5', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
-                              <th style={{ padding: '4px 12px', textAlign: 'left' }}>Дата</th>
-                              <th style={{ padding: '4px 12px', textAlign: 'left' }}>Товар</th>
-                              <th style={{ padding: '4px 12px', textAlign: 'right' }}>План</th>
-                              <th style={{ padding: '4px 12px', textAlign: 'left' }}>Бригада</th>
-                              <th style={{ padding: '4px 12px', textAlign: 'right' }}>Просрочка</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {group.tasks.map(t => {
-                              const over = group.dueDate ? daysDiff(t.date.slice(0, 10), group.dueDate.slice(0, 10)) : null
-                              return (
-                                <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                                  <td style={{ padding: '5px 12px', fontWeight: 600 }}>{formatDateFull(t.date)}</td>
-                                  <td style={{ padding: '5px 12px', fontSize: '0.85rem' }}><span style={{ fontWeight: 600 }}>{t.orderItem?.product?.code ?? '—'}</span></td>
-                                  <td style={{ padding: '5px 12px', textAlign: 'right' }}>{t.plannedQuantity}</td>
-                                  <td style={{ padding: '5px 12px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>{t.team?.name ?? '—'}</td>
-                                  <td style={{ padding: '5px 12px', textAlign: 'right' }}>
-                                    {over !== null && over > 0 && <span className="badge badge-danger">+{over} дн.</span>}
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
+                  {overloadByOrder.map(group => (
+                    <div key={group.orderNumber} style={{ marginBottom: '1rem' }}>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        background: '#fef2f2', border: '1px solid #fecaca',
+                        borderRadius: '6px 6px 0 0', padding: '6px 12px',
+                      }}>
+                        <span style={{ fontWeight: 700 }}>{group.orderNumber}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: 'var(--text-muted)' }}>{group.tasks.length} задач</span>
                       </div>
-                    )
-                  })}
+                      <table style={{ width: '100%', borderCollapse: 'collapse', borderTop: 'none' }}>
+                        <thead>
+                          <tr style={{ background: '#fff5f5', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                            <th style={{ padding: '4px 12px', textAlign: 'left' }}>Дата</th>
+                            <th style={{ padding: '4px 12px', textAlign: 'left' }}>Товар</th>
+                            <th style={{ padding: '4px 12px', textAlign: 'right' }}>План</th>
+                            <th style={{ padding: '4px 12px', textAlign: 'left' }}>Бригада</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.tasks.map(t => (
+                            <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '5px 12px', fontWeight: 600 }}>{formatDateFull(t.date)}</td>
+                              <td style={{ padding: '5px 12px', fontSize: '0.85rem' }}><span style={{ fontWeight: 600 }}>{t.orderItem?.product?.code ?? '—'}</span></td>
+                              <td style={{ padding: '5px 12px', textAlign: 'right' }}>{t.plannedQuantity}</td>
+                              <td style={{ padding: '5px 12px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>{t.team?.name ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
                 </div>
               )
             )}
@@ -527,7 +508,6 @@ export default function Planning() {
                   {filteredOrders.map((ord, i) => {
                     const plannedPct = ord.totalQuantity > 0 ? Math.min(100, (ord.totalPlanned / ord.totalQuantity) * 100) : 0
                     const donePct = ord.totalQuantity > 0 ? Math.min(100, (ord.totalProduced / ord.totalQuantity) * 100) : 0
-                    const isLate = ord.dueDate && ord.expectedCompletionDate && ord.expectedCompletionDate > ord.dueDate
                     const today = todayISO()
                     const daysUntil = ord.expectedCompletionDate
                       ? daysDiff(ord.expectedCompletionDate.slice(0, 10), today)
@@ -556,7 +536,7 @@ export default function Planning() {
                         </td>
                         <td style={{ padding: '8px 12px' }}>
                           {ord.expectedCompletionDate ? (
-                            <span style={{ fontWeight: 600, color: isLate ? 'var(--danger)' : daysUntil !== null && daysUntil <= 3 ? 'var(--warning)' : 'var(--success)' }}>
+                            <span style={{ fontWeight: 600, color: daysUntil !== null && daysUntil <= 3 ? 'var(--warning)' : 'var(--success)' }}>
                               {formatDateFull(ord.expectedCompletionDate)}
                               {daysUntil !== null && daysUntil >= 0 && (
                                 <span style={{ marginLeft: 6, fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>
@@ -622,7 +602,6 @@ export default function Planning() {
                       <th style={{ padding: '6px 12px', textAlign: 'left' }}>Категория</th>
                       <th style={{ padding: '6px 12px', textAlign: 'left' }}>Продукт</th>
                       <th style={{ padding: '6px 12px', textAlign: 'right' }}>Факт, шт.</th>
-                      <th style={{ padding: '6px 12px', textAlign: 'left' }}>Срок</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -637,9 +616,6 @@ export default function Planning() {
                         </td>
                         <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700, color: '#d97706' }}>
                           {item.actualQuantity.toLocaleString('ru-RU')}
-                        </td>
-                        <td style={{ padding: '7px 12px', fontSize: '0.82rem' }}>
-                          {item.dueDate ? formatDateFull(item.dueDate) : '—'}
                         </td>
                       </tr>
                     ))}

@@ -117,7 +117,7 @@ export default function Products() {
               ))}
             </select>
             <label>
-              Производительность/день
+              Произв. на 1 человека/день
               <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6, fontSize: '0.82rem' }}>
                 (оставьте пустым — возьмёт из 1С)
               </span>
@@ -145,7 +145,7 @@ export default function Products() {
                 <th>Код</th>
                 <th>Название</th>
                 <th>Категория</th>
-                <th>Производ./день</th>
+                <th title="Количество единиц, которое производит 1 человек за смену (8 ч). Мощность бригады = это число × количество людей в бригаде.">Произв. на чел./день</th>
                 <th style={{ width: 180 }}></th>
               </tr>
             </thead>
