@@ -296,6 +296,7 @@ async function calculateTeamLoad(teamId: string, date: Date): Promise<number> {
           select: {
             product: {
               select: {
+                id: true,
                 capacityPerDay: true,
                 category: { select: { capacityPerTeamPerDay: true } },
               },
@@ -304,12 +305,23 @@ async function calculateTeamLoad(teamId: string, date: Date): Promise<number> {
         },
       },
     }),
-    prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true } }),
+    prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true, companyId: true } }),
   ]);
 
   const headcount = team?.headcount ?? 1;
+  const loadCompanyId = team?.companyId ?? '';
+  const productIds = [...new Set(tasks.map(t => t.orderItem.product.id))];
+  const ptcList = productIds.length > 0 && loadCompanyId
+    ? await prisma.productTeamCapacity.findMany({
+        where: { productId: { in: productIds }, teamId, companyId: loadCompanyId },
+        select: { productId: true, capacityPerDay: true },
+      })
+    : [];
+  const ptcMap = new Map(ptcList.map(p => [p.productId, p.capacityPerDay]));
   return tasks.reduce((sum, task) => {
-    const capPerPerson = task.orderItem.product.capacityPerDay
+    const ptcCapacity = ptcMap.get(task.orderItem.product.id);
+    const capPerPerson = ptcCapacity
+      ?? task.orderItem.product.capacityPerDay
       ?? task.orderItem.product.category.capacityPerTeamPerDay;
     const cap = capPerPerson * headcount;
     return sum + (cap > 0 ? task.plannedQuantity / cap : 0);
@@ -406,7 +418,7 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
       include: {
         orderItem: {
           include: {
-            product: { include: { category: true } },
+            product: { include: { category: true, teamCapacities: { where: { teamId }, take: 1 } } },
             order: { select: { approvedAt: true, priority: true, raytecDate: true } },
           },
         },
@@ -416,7 +428,8 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
 
     let totalLoad = 0;
     for (const t of tasks) {
-      const cap = (t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
+      const ptcCap = t.orderItem.product.teamCapacities[0]?.capacityPerDay;
+      const cap = (ptcCap ?? t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
       totalLoad += cap > 0 ? t.plannedQuantity / cap : 0;
     }
     if (totalLoad <= effectiveFactor + 0.0001) return;
@@ -443,7 +456,8 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
 
     for (const task of sorted) {
       if (excessLoad <= 0.0001) break;
-      const cap = (task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
+      const ptcCap = task.orderItem.product.teamCapacities[0]?.capacityPerDay;
+      const cap = (ptcCap ?? task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
       const taskLoad = cap > 0 ? task.plannedQuantity / cap : 0;
 
       let moveQty: number;
@@ -509,12 +523,13 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
 
     const currentTasks = await prisma.dailyTask.findMany({
       where: { teamId, date, actualQuantity: null },
-      include: { orderItem: { include: { product: { include: { category: true } } } } },
+      include: { orderItem: { include: { product: { include: { category: true, teamCapacities: { where: { teamId }, take: 1 } } } } } },
     });
 
     let currentLoad = 0;
     for (const t of currentTasks) {
-      const cap = (t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
+      const ptcCap = t.orderItem.product.teamCapacities[0]?.capacityPerDay;
+      const cap = (ptcCap ?? t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
       currentLoad += cap > 0 ? t.plannedQuantity / cap : 0;
     }
 
@@ -527,7 +542,7 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
       include: {
         orderItem: {
           include: {
-            product: { include: { category: true } },
+            product: { include: { category: true, teamCapacities: { where: { teamId }, take: 1 } } },
             order: { select: { approvedAt: true, priority: true, raytecDate: true } },
           },
         },
@@ -557,7 +572,8 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
 
     for (const task of sorted) {
       if (freeLoad <= 0.0001) break;
-      const cap = (task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
+      const ptcCap = task.orderItem.product.teamCapacities[0]?.capacityPerDay;
+      const cap = (ptcCap ?? task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
       const taskLoad = cap > 0 ? task.plannedQuantity / cap : 0;
 
       let pullQty: number;
@@ -617,7 +633,7 @@ async function autoPlanOrderItem(
   }
 
   const { quantity } = orderItem;
-  const capacityPerTeamPerDay = orderItem.product.capacityPerDay
+  const fallbackCapPerPerson = orderItem.product.capacityPerDay
     ?? orderItem.product.category.capacityPerTeamPerDay;
   // Получаем доступные бригады для категории
   const availableTeamIds = await getAvailableTeamsForCategory(orderItem.product.categoryId, orderItem.order.companyId);
@@ -706,7 +722,11 @@ async function autoPlanOrderItem(
     const effectiveFraction = capOverride ? capOverride.factor : 1.0;
     // Мощность бригады = на 1 человека × численность бригады
     const teamHeadcount = (await prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true } }))?.headcount ?? 1;
-    const effectiveCapacity = capacityPerTeamPerDay * teamHeadcount;
+    const ptc = await prisma.productTeamCapacity.findUnique({
+      where: { productId_teamId_companyId: { productId: orderItem.product.id, teamId, companyId: orderItem.order.companyId } },
+      select: { capacityPerDay: true },
+    });
+    const effectiveCapacity = (ptc?.capacityPerDay ?? fallbackCapPerPerson) * teamHeadcount;
     // Свободная ёмкость в штуках для текущей категории
     const availableFraction = Math.max(0, effectiveFraction - currentLoadFraction);
     const available = Math.round(availableFraction * effectiveCapacity);
@@ -823,7 +843,7 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
     teams: { code: string; name: string; workshopName?: string; headcount?: number }[];
     teamCategories: { categoryName: string; teamName: string; workshopName?: string }[];
     fact: { orderNumber: string; productCode: string; remaining: number }[];
-    capacity?: { productCode: string; productName?: string; categoryName?: string; capacityPerDay: number }[];
+    capacity?: { productCode: string; productName?: string; categoryName?: string; teamName?: string; capacityPerDay: number }[];
   };
 
   const stats = { categories: 0, teams: 0, products: 0, orders: 0, orderItems: 0, categoryTeamLinks: 0, factRecords: 0, capacityRecords: 0 };
@@ -1068,11 +1088,32 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
       });
     }
 
-    const updated = await prisma.product.updateMany({
-      where: { code: cap.productCode, companyId, capacityLocked: false },
-      data: { capacityPerDay: cap.capacityPerDay },
-    });
-    stats.capacityRecords += updated.count;
+    const teamName = cap.teamName?.trim();
+    if (teamName) {
+      const product = await prisma.product.findUnique({
+        where: { code_companyId: { code: cap.productCode, companyId } },
+        select: { id: true },
+      });
+      const team = await prisma.team.findUnique({
+        where: { name_companyId: { name: teamName, companyId } },
+        select: { id: true },
+      });
+      if (product && team) {
+        await prisma.productTeamCapacity.upsert({
+          where: { productId_teamId_companyId: { productId: product.id, teamId: team.id, companyId } },
+          update: { capacityPerDay: cap.capacityPerDay },
+          create: { productId: product.id, teamId: team.id, companyId, capacityPerDay: cap.capacityPerDay },
+        });
+        stats.capacityRecords++;
+      }
+    } else {
+      // Нет teamName — обновляем глобальный Product.capacityPerDay как fallback
+      const updated = await prisma.product.updateMany({
+        where: { code: cap.productCode, companyId, capacityLocked: false },
+        data: { capacityPerDay: cap.capacityPerDay },
+      });
+      stats.capacityRecords += updated.count;
+    }
   }
 
   const skippedTotal = factSkipped.noOrder + factSkipped.noProduct + factSkipped.noOrderItem;
@@ -1582,7 +1623,7 @@ app.get("/products", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const products = await prisma.product.findMany({
     where: { companyId: cid },
-    include: { category: true },
+    include: { category: true, teamCapacities: { include: { team: true } } },
     orderBy: { code: "asc" },
   });
   res.json(products);

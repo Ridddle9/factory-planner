@@ -11,6 +11,13 @@ export interface ProductCategory {
   workshop?: Workshop
 }
 
+export interface ProductTeamCapacity {
+  id: string
+  teamId: string
+  capacityPerDay: number
+  team: { id: string; name: string }
+}
+
 export interface Product {
   id: string
   code: string
@@ -19,6 +26,7 @@ export interface Product {
   category?: ProductCategory
   capacityPerDay?: number | null
   capacityLocked?: boolean
+  teamCapacities?: ProductTeamCapacity[]
 }
 
 export interface Team {

@@ -18,13 +18,14 @@ model Company {
   syncToken String   @unique
   createdAt DateTime @default(now())
 
-  users           User[]
-  workshops       Workshop[]
-  categories      ProductCategory[]
-  teams           Team[]
-  products        Product[]
-  orders          Order[]
-  categoryBlocks  CategoryBlock[]
+  users                User[]
+  workshops            Workshop[]
+  categories           ProductCategory[]
+  teams                Team[]
+  products             Product[]
+  orders               Order[]
+  categoryBlocks       CategoryBlock[]
+  productTeamCapacities ProductTeamCapacity[]
 }
 
 // role: ADMIN | MEMBER
@@ -94,10 +95,11 @@ model Team {
   headcount Int    @default(1)
   companyId String
 
-  company       Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  categories    CategoryTeam[]
-  dailyTasks    DailyTask[]
-  dayCapacities TeamDayCapacity[]
+  company          Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  categories       CategoryTeam[]
+  dailyTasks       DailyTask[]
+  dayCapacities    TeamDayCapacity[]
+  productCapacities ProductTeamCapacity[]
 
   @@unique([name, companyId])
 }
@@ -134,9 +136,10 @@ model Product {
   capacityPerDay Int?
   capacityLocked Boolean @default(false)
 
-  category   ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  company    Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  orderItems OrderItem[]
+  category       ProductCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  company        Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  orderItems     OrderItem[]
+  teamCapacities ProductTeamCapacity[]
 
   @@unique([code, companyId])
 }
@@ -193,4 +196,19 @@ model DailyTask {
   team      Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
   @@unique([orderItemId, date])
+}
+
+// Производительность номенклатуры для конкретной бригады (шт/чел/день)
+model ProductTeamCapacity {
+  id             String @id @default(cuid())
+  productId      String
+  teamId         String
+  companyId      String
+  capacityPerDay Int
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([productId, teamId, companyId])
 }

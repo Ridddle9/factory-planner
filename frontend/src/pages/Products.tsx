@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { Product, ProductCategory } from '../types'
+import type { Product, ProductCategory, ProductTeamCapacity } from '../types'
 
 export default function Products() {
   const [list, setList] = useState<Product[]>([])
@@ -12,6 +12,7 @@ export default function Products() {
   const [form, setForm] = useState({ code: '', name: '', categoryId: '', capacityPerDay: '' })
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
+  const [capacityModal, setCapacityModal] = useState<Product | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -156,7 +157,15 @@ export default function Products() {
                   <td>{p.name}</td>
                   <td>{p.category?.name ?? '—'}</td>
                   <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {p.capacityPerDay != null ? (
+                    {p.teamCapacities && p.teamCapacities.length > 0 ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setCapacityModal(p)}
+                      >
+                        Смотреть
+                      </button>
+                    ) : p.capacityPerDay != null ? (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         {p.capacityPerDay}
                         {p.capacityLocked && (
@@ -184,6 +193,45 @@ export default function Products() {
           </table>
         )}
       </div>
+
+      {capacityModal && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          onClick={() => setCapacityModal(null)}
+        >
+          <div
+            className="card"
+            style={{ minWidth: 380, maxWidth: 560, maxHeight: '80vh', overflowY: 'auto' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '1rem' }}>Производительность по бригадам</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: 2 }}>{capacityModal.name}</div>
+              </div>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setCapacityModal(null)}>✕</button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Бригада</th>
+                  <th style={{ textAlign: 'right' }}>Произв. на чел./день</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(capacityModal.teamCapacities as ProductTeamCapacity[]).map(ptc => (
+                  <tr key={ptc.id}>
+                    <td>{ptc.team.name}</td>
+                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {ptc.capacityPerDay.toLocaleString('ru-RU')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </>
   )
 }
