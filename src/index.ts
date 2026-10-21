@@ -635,11 +635,27 @@ async function autoPlanOrderItem(
   const { quantity } = orderItem;
   const fallbackCapPerPerson = orderItem.product.capacityPerDay
     ?? orderItem.product.category.capacityPerTeamPerDay;
-  // Получаем доступные бригады для категории
-  const availableTeamIds = await getAvailableTeamsForCategory(orderItem.product.categoryId, orderItem.order.companyId);
+  // Бригады по товару: если у товара есть нормы из 1С — только бригады с нормой (как у Raytec).
+  // Категория и запасная мощность — только для товаров без норм по бригадам.
+  const ptcsForProduct = await prisma.productTeamCapacity.findMany({
+    where: { productId: orderItem.product.id, companyId: orderItem.order.companyId, capacityPerDay: { gt: 0 } },
+    select: { teamId: true, capacityPerDay: true },
+  });
+  const ptcCapMap = new Map(ptcsForProduct.map(p => [p.teamId, p.capacityPerDay]));
 
-  if (availableTeamIds.length === 0) {
-    throw new Error("No teams available for this product category");
+  let capableTeamIds: string[];
+  if (ptcsForProduct.length > 0) {
+    capableTeamIds = ptcsForProduct.map(p => p.teamId);
+  } else {
+    const availableTeamIds = await getAvailableTeamsForCategory(orderItem.product.categoryId, orderItem.order.companyId);
+    if (availableTeamIds.length === 0) {
+      throw new Error("No teams available for this product category");
+    }
+    capableTeamIds = (fallbackCapPerPerson ?? 0) > 0 ? availableTeamIds : [];
+  }
+
+  if (capableTeamIds.length === 0) {
+    throw new Error("No teams with non-zero capacity for this product");
   }
 
   // Определяем дату начала
@@ -703,10 +719,10 @@ async function autoPlanOrderItem(
     // Выбираем бригаду
     let teamId: string | null = null;
 
-    if (options?.preferredTeamId && availableTeamIds.includes(options.preferredTeamId)) {
+    if (options?.preferredTeamId && capableTeamIds.includes(options.preferredTeamId)) {
       teamId = options.preferredTeamId;
     } else {
-      teamId = await selectTeamWithMinLoad(availableTeamIds, date);
+      teamId = await selectTeamWithMinLoad(capableTeamIds, date);
     }
 
     if (!teamId) {
@@ -4344,7 +4360,7 @@ app.post("/planning/replan-queue", async (req: Request, res: Response) => {
 
     // 2. Get all order items with their orders
     const allItems = await prisma.orderItem.findMany({
-      where: { order: { companyId: cid } },
+      where: { order: { companyId: cid, active: true } },
       include: { order: true },
     });
 
@@ -4359,6 +4375,11 @@ app.post("/planning/replan-queue", async (req: Request, res: Response) => {
     const toplan = withRemaining
       .filter(({ remaining }) => remaining > 0)
       .sort((a, b) => {
+        // Как у Raytec: приоритет, затем Дата передачи, затем дата согласования
+        if (a.item.order.priority !== b.item.order.priority) return a.item.order.priority - b.item.order.priority;
+        const rayA = a.item.order.raytecDate?.getTime() ?? 0;
+        const rayB = b.item.order.raytecDate?.getTime() ?? 0;
+        if (rayA !== rayB) return rayA - rayB;
         const dateA = a.item.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
         const dateB = b.item.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
         if (dateA !== dateB) return dateA - dateB;

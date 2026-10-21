@@ -9,3 +9,5 @@ dist/
 *.xlsx
 cleanup.js
 frontend/tsconfig.tsbuildinfo
+
+.claude/settings.local.json
