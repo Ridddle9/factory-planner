@@ -12,7 +12,25 @@ import { randomUUID } from "crypto";
 const upload = multer({ storage: multer.memoryStorage() });
 
 const app = express();
-const prisma = new PrismaClient();
+
+// Если задачу меняют не через планировщик (количество или бригада), её точная доля дня
+// (loadShare) больше не верна — сбрасываем, загрузка посчитается как plannedQuantity / мощность
+function dropStaleLoadShare(data: unknown): void {
+  if (!data || typeof data !== "object") return;
+  const d = data as Record<string, unknown>;
+  if (d["loadShare"] !== undefined) return;
+  if ("plannedQuantity" in d || "teamId" in d || "team" in d) d["loadShare"] = null;
+}
+
+const prisma = new PrismaClient().$extends({
+  query: {
+    dailyTask: {
+      update({ args, query }) { dropStaleLoadShare(args.data); return query(args); },
+      updateMany({ args, query }) { dropStaleLoadShare(args.data); return query(args); },
+      upsert({ args, query }) { dropStaleLoadShare(args.update); return query(args); },
+    },
+  },
+});
 
 const JWT_SECRET = process.env["JWT_SECRET"] ?? "dev-secret-change-in-production";
 const PORT = parseInt(process.env["PORT"] ?? "3000", 10);
@@ -284,14 +302,22 @@ async function calculateRemainingQuantity(orderItemId: string): Promise<number> 
   return orderItem?.quantity ?? 0;
 }
 
+// Доля бригадо-дня, которую занимает задача: точная доля от планировщика (loadShare),
+// если задачу не меняли руками, иначе plannedQuantity / мощность
+function taskLoad(task: { plannedQuantity: number; loadShare: number | null }, cap: number): number {
+  if (task.loadShare !== null) return task.loadShare;
+  return cap > 0 ? task.plannedQuantity / cap : 0;
+}
+
 // Helper: вычислить загрузку бригады на дату в долях бригадо-дня (0.0–1.0+)
-// load = Σ(plannedQuantity / capacityPerDay) по всем задачам
+// load = Σ доля дня по всем задачам (см. taskLoad)
 async function calculateTeamLoad(teamId: string, date: Date): Promise<number> {
   const [tasks, team] = await Promise.all([
     prisma.dailyTask.findMany({
       where: { teamId, date },
       select: {
         plannedQuantity: true,
+        loadShare: true,
         orderItem: {
           select: {
             product: {
@@ -323,8 +349,7 @@ async function calculateTeamLoad(teamId: string, date: Date): Promise<number> {
     const capPerPerson = ptcCapacity
       ?? task.orderItem.product.capacityPerDay
       ?? task.orderItem.product.category.capacityPerTeamPerDay;
-    const cap = capPerPerson * headcount;
-    return sum + (cap > 0 ? task.plannedQuantity / cap : 0);
+    return sum + taskLoad(task, capPerPerson * headcount);
   }, 0);
 }
 
@@ -430,7 +455,7 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
     for (const t of tasks) {
       const ptcCap = t.orderItem.product.teamCapacities[0]?.capacityPerDay;
       const cap = (ptcCap ?? t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
-      totalLoad += cap > 0 ? t.plannedQuantity / cap : 0;
+      totalLoad += taskLoad(t, cap);
     }
     if (totalLoad <= effectiveFactor + 0.0001) return;
 
@@ -458,13 +483,13 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
       if (excessLoad <= 0.0001) break;
       const ptcCap = task.orderItem.product.teamCapacities[0]?.capacityPerDay;
       const cap = (ptcCap ?? task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
-      const taskLoad = cap > 0 ? task.plannedQuantity / cap : 0;
+      const thisLoad = taskLoad(task, cap);
 
       let moveQty: number;
-      if (taskLoad <= excessLoad + 0.0001) {
+      if (thisLoad <= excessLoad + 0.0001) {
         // Move entire task
         moveQty = task.plannedQuantity;
-        excessLoad -= taskLoad;
+        excessLoad -= thisLoad;
         await prisma.dailyTask.delete({ where: { id: task.id } });
       } else {
         // Move partial (just the excess)
@@ -530,7 +555,7 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
     for (const t of currentTasks) {
       const ptcCap = t.orderItem.product.teamCapacities[0]?.capacityPerDay;
       const cap = (ptcCap ?? t.orderItem.product.capacityPerDay ?? t.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
-      currentLoad += cap > 0 ? t.plannedQuantity / cap : 0;
+      currentLoad += taskLoad(t, cap);
     }
 
     // Day is full — nothing to pull into, but continue forward in case we created a gap earlier
@@ -574,12 +599,12 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
       if (freeLoad <= 0.0001) break;
       const ptcCap = task.orderItem.product.teamCapacities[0]?.capacityPerDay;
       const cap = (ptcCap ?? task.orderItem.product.capacityPerDay ?? task.orderItem.product.category.capacityPerTeamPerDay) * teamHeadcount;
-      const taskLoad = cap > 0 ? task.plannedQuantity / cap : 0;
+      const thisLoad = taskLoad(task, cap);
 
       let pullQty: number;
-      if (taskLoad <= freeLoad + 0.0001) {
+      if (thisLoad <= freeLoad + 0.0001) {
         pullQty = task.plannedQuantity;
-        freeLoad -= taskLoad;
+        freeLoad -= thisLoad;
         await prisma.dailyTask.delete({ where: { id: task.id } });
       } else {
         pullQty = Math.floor(freeLoad * cap);
@@ -678,6 +703,10 @@ async function autoPlanOrderItem(
 
   const maxDays = 365; // Защита от бесконечного цикла
   let daysPlanned = 0;
+  // Как у Raytec: время бригады непрерывное, позиция занимает target / мощность бригадо-дней.
+  // progress — сколько штук «сделано» по времени (дробно), чтобы знать, где позиция кончается.
+  const target = remaining;
+  let progress = 0;
 
   while (remaining > 0 && daysPlanned < maxDays) {
     // Используем локальные компоненты даты, чтобы избежать сдвига UTC+ (напр. Москва UTC+3)
@@ -743,12 +772,19 @@ async function autoPlanOrderItem(
       select: { capacityPerDay: true },
     });
     const effectiveCapacity = (ptc?.capacityPerDay ?? fallbackCapPerPerson) * teamHeadcount;
-    // Свободная ёмкость в штуках для текущей категории
+    // Свободная доля бригадо-дня
     const availableFraction = Math.max(0, effectiveFraction - currentLoadFraction);
-    const available = Math.round(availableFraction * effectiveCapacity);
-
-    // Планируем на этот день
-    const plannedForDay = Math.min(remaining, available);
+    // Доля дня, которую займёт позиция, и штуки на день: целая часть,
+    // а остаток от округлений — в последний день позиции (как у Raytec: 22,5/день → 22, 22, 17)
+    let share = 0;
+    let plannedForDay = 0;
+    if (effectiveCapacity > 0 && availableFraction > 1e-9) {
+      const needFraction = (target - progress) / effectiveCapacity;
+      share = Math.min(availableFraction, needFraction);
+      progress += share * effectiveCapacity;
+      const isLast = share >= needFraction - 1e-9;
+      plannedForDay = isLast ? remaining : Math.min(remaining, Math.floor(share * effectiveCapacity + 1e-9));
+    }
 
     if (plannedForDay > 0) {
       // Проверяем, не существует ли уже задача на эту дату для этой позиции
@@ -768,6 +804,7 @@ async function autoPlanOrderItem(
             team: { connect: { id: teamId } },
             date,
             plannedQuantity: plannedForDay,
+            loadShare: share,
           },
           include: {
             orderItem: {

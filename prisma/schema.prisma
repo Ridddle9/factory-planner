@@ -188,6 +188,7 @@ model DailyTask {
   teamId          String?
   date            DateTime
   plannedQuantity Int      @default(0)
+  loadShare       Float? // доля бригадо-дня от планировщика (непрерывное время, как у Raytec); null — считать plannedQuantity / мощность
   actualQuantity  Int?
   comment         String?
   manuallyPlaced  Boolean  @default(false)
