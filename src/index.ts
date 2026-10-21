@@ -1126,7 +1126,8 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
       // Нет teamName — обновляем глобальный Product.capacityPerDay как fallback
       const updated = await prisma.product.updateMany({
         where: { code: cap.productCode, companyId, capacityLocked: false },
-        data: { capacityPerDay: cap.capacityPerDay },
+        // Product.capacityPerDay целое, а норма из 1С может быть дробной
+        data: { capacityPerDay: Math.max(1, Math.round(cap.capacityPerDay)) },
       });
       stats.capacityRecords += updated.count;
     }
