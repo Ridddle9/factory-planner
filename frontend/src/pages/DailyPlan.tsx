@@ -362,12 +362,12 @@ export default function DailyPlan() {
                 const pct = cap ? Math.round(cap.factor * 100) : 100
                 const isEditing = editingCapacity === t.id
                 return (
-                  <div key={t.id} style={{ background: '#fff', border: `1px solid ${pct < 100 ? '#fbbf24' : 'var(--border)'}`, borderRadius: 6, padding: '0.4rem 0.75rem', fontSize: '0.82rem', minWidth: 220 }}>
+                  <div key={t.id} style={{ background: '#fff', border: `1px solid ${pct < 100 ? '#fbbf24' : 'var(--border)'}`, borderRadius: 6, padding: '0.4rem 0.75rem', fontSize: '0.82rem', minWidth: 'min(220px, 100%)', flex: '1 1 220px' }}>
                     {isEditing ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                         <strong style={{ fontSize: '0.78rem' }}>{t.name}</strong>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <input type="number" min={0} max={100} value={capFactor} onChange={e => setCapFactor(Number(e.target.value))} style={{ width: 60 }} />
+                          <input type="number" inputMode="numeric" min={0} max={100} value={capFactor} onChange={e => setCapFactor(Number(e.target.value))} style={{ width: 60 }} />
                           <span>%</span>
                         </div>
                         <input type="text" placeholder="Причина (необязательно)" value={capNote} onChange={e => setCapNote(e.target.value)} style={{ fontSize: '0.78rem' }} />
@@ -427,7 +427,7 @@ export default function DailyPlan() {
               </label>
               <label>
                 <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: 3 }}>План (шт)</span>
-                <input type="number" min={0} value={addForm.plannedQuantity} onChange={e => setAddForm(f => ({ ...f, plannedQuantity: Number(e.target.value) || 0 }))} style={{ width: 90 }} />
+                <input type="number" inputMode="numeric" min={0} value={addForm.plannedQuantity} onChange={e => setAddForm(f => ({ ...f, plannedQuantity: Number(e.target.value) || 0 }))} style={{ width: 90 }} />
               </label>
               <label>
                 <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: 3 }}>Бригада</span>
@@ -490,7 +490,7 @@ export default function DailyPlan() {
                           </span>
                           <span style={{ color: 'var(--text-muted)' }}>план: {tPlan} / факт: {tFact}</span>
                         </div>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <table className="stack" style={{ width: '100%', borderCollapse: 'collapse' }}>
                           <thead>
                             <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
                               <th style={{ width: 36, padding: '4px 8px' }}>
@@ -518,34 +518,34 @@ export default function DailyPlan() {
                             {teamTasks.map(t => (
                               <>
                                 <tr key={t.id} style={{ borderBottom: splittingTask?.id === t.id || movingTask?.id === t.id ? 'none' : '1px solid var(--border)', background: rowBg(t) }}>
-                                  <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                                  <td data-label="Выбрать" className="stack-hide-mobile" style={{ padding: '6px 8px', textAlign: 'center' }}>
                                     <input type="checkbox" checked={selectedTaskIds.has(t.id)} onChange={() => toggleTask(t.id)} />
                                   </td>
-                                  <td style={{ padding: '6px 8px', fontSize: '0.85rem' }}>
+                                  <td className="stack-title" style={{ padding: '6px 8px', fontSize: '0.85rem' }}>
                                     <span style={{ fontWeight: 600 }}>{t.orderItem?.product?.code ?? '—'}</span>
                                     <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: '0.78rem' }}>{t.orderItem?.product?.name ?? ''}</span>
                                   </td>
-                                  <td style={{ padding: '6px 8px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                                  <td data-label="Заказ" style={{ padding: '6px 8px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                                     {t.orderItem?.order?.orderNumber ?? '—'}
                                   </td>
-                                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>
+                                  <td data-label="План" style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>
                                     {editingPlan === t.id ? (
-                                      <input type="number" min={0} value={editPlanVal} onChange={e => setEditPlanVal(Number(e.target.value))} style={{ width: 60, textAlign: 'right' }} autoFocus />
+                                      <input type="number" inputMode="numeric" min={0} value={editPlanVal} onChange={e => setEditPlanVal(Number(e.target.value))} style={{ width: 60, textAlign: 'right' }} autoFocus />
                                     ) : t.plannedQuantity}
                                   </td>
-                                  <td style={{ padding: '6px 8px', textAlign: 'right', color: t.actualQuantity !== null ? (t.actualQuantity >= t.plannedQuantity ? '#16a34a' : '#d97706') : 'var(--text-muted)' }}>
+                                  <td data-label="Факт" style={{ padding: '6px 8px', textAlign: 'right', color: t.actualQuantity !== null ? (t.actualQuantity >= t.plannedQuantity ? '#16a34a' : '#d97706') : 'var(--text-muted)' }}>
                                     {editingFact === t.id ? (
-                                      <input type="number" min={0} value={editFactVal} onChange={e => setEditFactVal(e.target.value === '' ? '' : Number(e.target.value))} style={{ width: 60, textAlign: 'right' }} autoFocus />
+                                      <input type="number" inputMode="numeric" min={0} value={editFactVal} onChange={e => setEditFactVal(e.target.value === '' ? '' : Number(e.target.value))} style={{ width: 60, textAlign: 'right' }} autoFocus />
                                     ) : (t.actualQuantity ?? '—')}
                                   </td>
-                                  <td style={{ padding: '6px 8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                  <td data-label="Комментарий" className={!t.comment && editingFact !== t.id ? 'stack-hide-mobile' : undefined} style={{ padding: '6px 8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                                     {editingFact === t.id ? (
                                       <input type="text" placeholder="Комментарий" value={editFactComment} onChange={e => setEditFactComment(e.target.value)} style={{ width: '100%' }} />
                                     ) : (
                                       <span title={t.comment ?? ''}>{t.comment ? (t.comment.length > 40 ? t.comment.slice(0, 40) + '…' : t.comment) : '—'}</span>
                                     )}
                                   </td>
-                                  <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                  <td className="stack-actions" style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                                     {editingPlan === t.id ? (
                                       <>
                                         <select value={editPlanTeam} onChange={e => setEditPlanTeam(e.target.value)} style={{ width: 110, marginRight: 4 }}>
@@ -593,14 +593,14 @@ export default function DailyPlan() {
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', flexWrap: 'wrap' }}>
                                         <span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Разбить {t.plannedQuantity} шт:</span>
                                         <input
-                                          type="number" min={1} max={t.plannedQuantity - 1}
+                                          type="number" inputMode="numeric" min={1} max={t.plannedQuantity - 1}
                                           value={splitQty1}
                                           onChange={e => { const v = Number(e.target.value); setSplitQty1(v); setSplitQty2(t.plannedQuantity - v) }}
                                           style={{ width: 70 }}
                                         />
                                         <span>сегодня ({t.date.slice(0, 10)}) +</span>
                                         <input
-                                          type="number" min={1} max={t.plannedQuantity - 1}
+                                          type="number" inputMode="numeric" min={1} max={t.plannedQuantity - 1}
                                           value={splitQty2}
                                           onChange={e => { const v = Number(e.target.value); setSplitQty2(v); setSplitQty1(t.plannedQuantity - v) }}
                                           style={{ width: 70 }}
@@ -631,7 +631,7 @@ export default function DailyPlan() {
               )
             })}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1.5rem', padding: '0.5rem 0', borderTop: '2px solid var(--border)', fontSize: '0.9rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: '0.5rem 1.5rem', padding: '0.5rem 0', borderTop: '2px solid var(--border)', fontSize: '0.9rem' }}>
               <span>Всего позиций: <strong>{tasks.length}</strong></span>
               <span>План: <strong>{totalPlan}</strong></span>
               <span>Факт: <strong style={{ color: totalFact >= totalPlan ? '#16a34a' : '#d97706' }}>{totalFact}</strong></span>

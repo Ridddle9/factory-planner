@@ -190,7 +190,7 @@ export default function Categories() {
             <label>Название</label>
             <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Категория" />
             <label>Мощность по умолчанию, ед./день <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.82rem' }}>(фолбэк — если у продукта нет мощности из маршрутизации 1С)</span></label>
-            <input type="number" min={1} value={form.capacityPerTeamPerDay} onChange={e => setForm(f => ({ ...f, capacityPerTeamPerDay: Number(e.target.value) || 1 }))} />
+            <input type="number" inputMode="numeric" min={1} value={form.capacityPerTeamPerDay} onChange={e => setForm(f => ({ ...f, capacityPerTeamPerDay: Number(e.target.value) || 1 }))} />
             <label>Участок</label>
             <select value={form.workshopId} onChange={e => setForm(f => ({ ...f, workshopId: e.target.value }))}>
               <option value="">— выберите —</option>
@@ -207,7 +207,7 @@ export default function Categories() {
         {list.length === 0 ? (
           <div className="empty">Нет категорий. Сначала добавьте участки.</div>
         ) : (
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Название</th>
@@ -218,9 +218,9 @@ export default function Categories() {
             <tbody>
               {list.map(c => (
                 <tr key={c.id}>
-                  <td>{c.name}</td>
-                  <td>{c.workshop?.name ?? '—'}</td>
-                  <td>
+                  <td className="stack-title">{c.name || '—'}</td>
+                  <td data-label="Участок">{c.workshop?.name ?? '—'}</td>
+                  <td className="stack-actions">
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openTeams(c.id)}>Бригады</button>
                     {' '}
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openBlocks(c.id)}>Блоки</button>

@@ -295,7 +295,7 @@ export default function Onboarding() {
               Потом можно подключить 1С — тогда данные будут загружаться автоматически.
             </p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="onboarding-choices" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
               <button
                 onClick={handleQuickStart}
                 disabled={seeding}

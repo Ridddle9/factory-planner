@@ -159,7 +159,7 @@ export default function Import() {
             По этим позициям факт за вчера уже был введён вручную и отличается от рассчитанного.
             Выберите, какое значение оставить.
           </p>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+          <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ background: '#fee2e2', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
                 <th style={{ padding: '5px 10px', textAlign: 'left' }}>Заказ</th>
@@ -172,11 +172,11 @@ export default function Import() {
             <tbody>
               {conflicts.map(c => (
                 <tr key={c.taskId} style={{ borderBottom: '1px solid #fecaca' }}>
-                  <td style={{ padding: '7px 10px', fontWeight: 600 }}>{c.orderNumber}</td>
-                  <td style={{ padding: '7px 10px', color: 'var(--text-muted)' }}>{c.productCode}</td>
-                  <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 600 }}>{c.existingFact}</td>
-                  <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 600, color: 'var(--primary)' }}>{c.calculatedFact}</td>
-                  <td style={{ padding: '7px 10px', textAlign: 'center' }}>
+                  <td className="stack-title" style={{ padding: '7px 10px', fontWeight: 600 }}>{c.orderNumber}</td>
+                  <td data-label="Товар" style={{ padding: '7px 10px', color: 'var(--text-muted)' }}>{c.productCode}</td>
+                  <td data-label="Факт (ручной)" style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 600 }}>{c.existingFact}</td>
+                  <td data-label="Факт (из Excel)" style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 600, color: 'var(--primary)' }}>{c.calculatedFact}</td>
+                  <td className="stack-actions" style={{ padding: '7px 10px', textAlign: 'center' }}>
                     <label style={{ marginRight: 16, cursor: 'pointer', fontSize: '0.82rem' }}>
                       <input
                         type="radio"
@@ -204,7 +204,7 @@ export default function Import() {
               ))}
             </tbody>
           </table>
-          <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               type="button"
               className="btn btn-primary"
@@ -250,7 +250,7 @@ export default function Import() {
             По этим позициям остаток («К обеспечению») больше суммы будущих задач.
             Их нужно распланировать вручную на странице <strong>Расписание</strong>.
           </p>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+          <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ background: '#ffedd5', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#92400e' }}>
                 <th style={{ padding: '5px 10px', textAlign: 'left' }}>Заказ</th>
@@ -263,11 +263,11 @@ export default function Import() {
             <tbody>
               {unplanned.map(u => (
                 <tr key={u.orderItemId} style={{ borderBottom: '1px solid #fed7aa' }}>
-                  <td style={{ padding: '7px 10px', fontWeight: 600 }}>{u.orderNumber}</td>
-                  <td style={{ padding: '7px 10px', color: '#92400e' }}>{u.productCode}</td>
-                  <td style={{ padding: '7px 10px', textAlign: 'right' }}>{u.remaining}</td>
-                  <td style={{ padding: '7px 10px', textAlign: 'right' }}>{u.planned}</td>
-                  <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>+{u.gap}</td>
+                  <td className="stack-title" style={{ padding: '7px 10px', fontWeight: 600 }}>{u.orderNumber}</td>
+                  <td data-label="Товар" style={{ padding: '7px 10px', color: '#92400e' }}>{u.productCode}</td>
+                  <td data-label="Остаток K" style={{ padding: '7px 10px', textAlign: 'right' }}>{u.remaining}</td>
+                  <td data-label="Запланировано" style={{ padding: '7px 10px', textAlign: 'right' }}>{u.planned}</td>
+                  <td data-label="Нехватка" style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>+{u.gap}</td>
                 </tr>
               ))}
             </tbody>

@@ -1,18 +1,48 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
+
+// Заголовок верхней панели на телефоне
+const PAGE_TITLES: [string, string][] = [
+  ['/workshops', 'Участки'],
+  ['/categories', 'Категории'],
+  ['/products', 'Товары'],
+  ['/teams', 'Бригады'],
+  ['/orders', 'Заказы'],
+  ['/schedule', 'График'],
+  ['/planning', 'Аналитика'],
+  ['/plan', 'План на день'],
+  ['/import', 'Импорт Excel'],
+  ['/admin/approvals', 'Заявки на доступ'],
+]
 
 export default function Layout({ children }: { children?: React.ReactNode }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  // Меню на телефоне закрывается при переходе на другую страницу
+  useEffect(() => { setMenuOpen(false) }, [location.pathname])
 
   async function handleLogout() {
     await logout()
     navigate('/login')
   }
 
+  const pageTitle = PAGE_TITLES.find(([path]) => location.pathname.startsWith(path))?.[1] ?? 'Участки'
+
   return (
     <div className="layout">
-      <nav className="nav">
+      <header className="mobile-bar">
+        <button type="button" className="mobile-bar-menu" aria-label="Открыть меню" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
+          <span /><span /><span />
+        </button>
+        <div className="mobile-bar-title">{pageTitle}</div>
+        <div className="nav-logo-icon">⚙</div>
+      </header>
+      {menuOpen && <div className="nav-backdrop" onClick={() => setMenuOpen(false)} />}
+      <nav className={menuOpen ? 'nav open' : 'nav'}>
         <div className="nav-logo">
           <div className="nav-logo-icon">⚙</div>
           <div>

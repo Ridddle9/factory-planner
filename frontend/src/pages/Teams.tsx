@@ -201,7 +201,7 @@ export default function Teams() {
             <label>Название</label>
             <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Бригада №..." />
             <label>Количество людей</label>
-            <input type="number" min={1} value={formHeadcount} onChange={e => setFormHeadcount(Math.max(1, Number(e.target.value) || 1))} />
+            <input type="number" inputMode="numeric" min={1} value={formHeadcount} onChange={e => setFormHeadcount(Math.max(1, Number(e.target.value) || 1))} />
             <div className="form-actions">
               <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>{editing ? 'Сохранить' : 'Создать'}</button>
               <button type="button" className="btn btn-secondary" onClick={() => { setShowForm(false); setEditing(null); setFormName(''); setFormHeadcount(1) }}>Отмена</button>
@@ -211,7 +211,7 @@ export default function Teams() {
         {list.length === 0 ? (
           <div className="empty">Нет бригад. Добавьте первую.</div>
         ) : (
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Название</th>
@@ -222,9 +222,9 @@ export default function Teams() {
             <tbody>
               {list.map(t => (
                 <tr key={t.id}>
-                  <td>{t.name}</td>
-                  <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{t.headcount}</td>
-                  <td>
+                  <td className="stack-title">{t.name}</td>
+                  <td data-label="Людей" style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{t.headcount}</td>
+                  <td className="stack-actions">
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openEdit(t)}>Изменить</button>
                     {' '}
                     <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(t.id)}>Удалить</button>
@@ -237,7 +237,7 @@ export default function Teams() {
       </div>}
 
       {tab === 'capacity' && <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.25rem 1rem', marginBottom: '0.75rem' }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Мощности бригад по дням</h2>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
             Задайте пониженную мощность, если вышло меньше людей
@@ -265,7 +265,7 @@ export default function Teams() {
                 <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
                   Активные корректировки
                 </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                   <thead>
                     <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
                       <th style={{ textAlign: 'left', padding: '4px 8px' }}>Бригада</th>
@@ -278,9 +278,9 @@ export default function Teams() {
                   <tbody>
                     {overrides.sort((a, b) => a.date.localeCompare(b.date)).map(cap => (
                       <tr key={cap.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '6px 8px', fontWeight: 600 }}>{cap.team?.name ?? cap.teamId}</td>
-                        <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>{formatDate(cap.date.slice(0, 10))}</td>
-                        <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                        <td className="stack-title" style={{ padding: '6px 8px', fontWeight: 600 }}>{cap.team?.name ?? cap.teamId}</td>
+                        <td data-label="Дата" style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>{formatDate(cap.date.slice(0, 10))}</td>
+                        <td data-label="Мощность" style={{ padding: '6px 8px', textAlign: 'center' }}>
                           <span style={{
                             fontWeight: 700, color: cap.factor < 0.5 ? '#dc2626' : cap.factor < 1 ? '#d97706' : '#16a34a',
                             background: cap.factor < 0.5 ? '#fef2f2' : cap.factor < 1 ? '#fffbeb' : '#f0fdf4',
@@ -289,10 +289,10 @@ export default function Teams() {
                             {Math.round(cap.factor * 100)}%
                           </span>
                         </td>
-                        <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                        <td data-label="Причина" style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
                           {cap.note ?? '—'}
                         </td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                        <td className="stack-actions" style={{ padding: '6px 8px', textAlign: 'right' }}>
                           <button className="btn btn-danger btn-sm" onClick={() => deleteCapacity(cap.id)}>✕</button>
                         </td>
                       </tr>
@@ -309,12 +309,12 @@ export default function Teams() {
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem' }}>
                 <colgroup>
-                  <col style={{ width: 200 }} />
+                  <col className="sticky-col-width" style={{ width: 200 }} />
                   {dates.map(d => <col key={d} style={{ width: 78 }} />)}
                 </colgroup>
                 <thead>
                   <tr>
-                    <th style={{ background: 'var(--sidebar-bg)', color: '#e2e8f0', padding: '5px 8px', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                    <th className="sticky-col" style={{ background: 'var(--sidebar-bg)', color: '#e2e8f0', padding: '5px 8px', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase' }}>
                       Бригада
                     </th>
                     {dates.map(d => {
@@ -336,7 +336,7 @@ export default function Teams() {
                 <tbody>
                   {list.map((team, ri) => (
                     <tr key={team.id} style={{ background: ri % 2 === 0 ? '#fff' : '#f8fafc' }}>
-                      <td style={{ padding: '6px 8px', fontWeight: 600, borderRight: '2px solid var(--primary)', fontSize: '0.82rem' }}>
+                      <td className="sticky-col" style={{ padding: '6px 8px', fontWeight: 600, borderRight: '2px solid var(--primary)', fontSize: '0.82rem', background: 'inherit' }}>
                         {team.name}
                       </td>
                       {dates.map(d => {
@@ -355,7 +355,7 @@ export default function Teams() {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 4px', minWidth: 70 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                   <input
-                                    type="number" min={0} max={100} value={capFactor}
+                                    type="number" inputMode="numeric" min={0} max={100} value={capFactor}
                                     onChange={e => setCapFactor(Number(e.target.value))}
                                     style={{ width: 42, fontSize: '0.75rem', padding: '1px 3px' }}
                                     autoFocus

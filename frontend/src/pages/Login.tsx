@@ -44,7 +44,7 @@ export default function Login() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
-      <div className="card" style={{ width: 380, padding: '2rem' }}>
+      <div className="card" style={{ width: 380, maxWidth: '100%', padding: '2rem' }}>
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>⚙</div>
           <h2 style={{ margin: 0 }}>Factory Planner</h2>
@@ -59,6 +59,8 @@ export default function Login() {
               type="text"
               value={form.inn}
               onChange={e => set('inn', e.target.value)}
+              inputMode="numeric"
+              autoComplete="organization"
               placeholder="1234567890"
               required
               style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
@@ -70,6 +72,8 @@ export default function Login() {
             <input
               className="input"
               type="email"
+              autoComplete="username"
+              autoCapitalize="none"
               value={form.email}
               onChange={e => set('email', e.target.value)}
               placeholder="you@company.ru"
@@ -83,6 +87,7 @@ export default function Login() {
             <input
               className="input"
               type="password"
+              autoComplete="current-password"
               value={form.password}
               onChange={e => set('password', e.target.value)}
               placeholder="••••••••"
@@ -97,7 +102,7 @@ export default function Login() {
             </div>
           )}
 
-          <button className="btn" type="submit" disabled={loading} style={{ marginTop: 4 }}>
+          <button className="btn btn-primary" type="submit" disabled={loading} style={{ marginTop: 4 }}>
             {loading ? 'Вход...' : 'Войти'}
           </button>
         </form>

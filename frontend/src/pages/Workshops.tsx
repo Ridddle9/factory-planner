@@ -93,7 +93,7 @@ export default function Workshops() {
         {list.length === 0 ? (
           <div className="empty">Нет участков. Добавьте первый.</div>
         ) : (
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Название</th>
@@ -103,8 +103,8 @@ export default function Workshops() {
             <tbody>
               {list.map(w => (
                 <tr key={w.id}>
-                  <td>{w.name}</td>
-                  <td>
+                  <td className="stack-title">{w.name}</td>
+                  <td className="stack-actions">
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openEdit(w)}>Изменить</button>
                     {' '}
                     <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(w.id)}>Удалить</button>

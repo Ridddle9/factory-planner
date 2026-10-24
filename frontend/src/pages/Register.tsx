@@ -43,7 +43,7 @@ export default function Register() {
   if (success && !isFirstUser) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
-        <div className="card" style={{ width: 400, padding: '2rem', textAlign: 'center' }}>
+        <div className="card" style={{ width: 400, maxWidth: '100%', padding: '2rem', textAlign: 'center' }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
           <h2>Заявка отправлена</h2>
           <p style={{ color: '#64748b' }}>
@@ -60,7 +60,7 @@ export default function Register() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
-      <div className="card" style={{ width: 400, padding: '2rem' }}>
+      <div className="card" style={{ width: 400, maxWidth: '100%', padding: '2rem' }}>
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>⚙</div>
           <h2 style={{ margin: 0 }}>Регистрация</h2>
@@ -77,6 +77,8 @@ export default function Register() {
               type="text"
               value={form.inn}
               onChange={e => set('inn', e.target.value)}
+              inputMode="numeric"
+              autoComplete="organization"
               placeholder="1234567890"
               required
               style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
@@ -101,6 +103,8 @@ export default function Register() {
             <input
               className="input"
               type="email"
+              autoComplete="username"
+              autoCapitalize="none"
               value={form.email}
               onChange={e => set('email', e.target.value)}
               placeholder="you@company.ru"
@@ -114,6 +118,7 @@ export default function Register() {
             <input
               className="input"
               type="password"
+              autoComplete="new-password"
               value={form.password}
               onChange={e => set('password', e.target.value)}
               placeholder="••••••••"
@@ -129,7 +134,7 @@ export default function Register() {
             </div>
           )}
 
-          <button className="btn" type="submit" disabled={loading} style={{ marginTop: 4 }}>
+          <button className="btn btn-primary" type="submit" disabled={loading} style={{ marginTop: 4 }}>
             {loading ? 'Регистрация...' : 'Зарегистрироваться'}
           </button>
         </form>

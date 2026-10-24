@@ -217,8 +217,8 @@ export default function AdminApproval() {
       {allUsersLoading && <p style={{ color: '#64748b' }}>Загрузка...</p>}
 
       {!allUsersLoading && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+        <div className="card card-flush" style={{ padding: 0, overflow: 'hidden' }}>
+          <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
                 <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: '#475569' }}>Email</th>
@@ -233,11 +233,11 @@ export default function AdminApproval() {
                   key={u.id}
                   style={{ borderBottom: i < allUsers.length - 1 ? '1px solid #f1f5f9' : undefined }}
                 >
-                  <td style={{ padding: '10px 16px' }}>{u.email}</td>
-                  <td style={{ padding: '10px 16px', color: u.role === 'ADMIN' ? '#7c3aed' : '#64748b' }}>
+                  <td className="stack-title" style={{ padding: '10px 16px' }}>{u.email}</td>
+                  <td data-label="Роль" style={{ padding: '10px 16px', color: u.role === 'ADMIN' ? '#7c3aed' : '#64748b' }}>
                     {u.role === 'ADMIN' ? 'Администратор' : 'Сотрудник'}
                   </td>
-                  <td style={{ padding: '10px 16px' }}>
+                  <td data-label="Статус" style={{ padding: '10px 16px' }}>
                     <span style={{
                       display: 'inline-block',
                       padding: '2px 8px',
@@ -250,7 +250,7 @@ export default function AdminApproval() {
                       {STATUS_LABEL[u.status] ?? u.status}
                     </span>
                   </td>
-                  <td style={{ padding: '10px 16px', color: '#94a3b8', fontSize: 13 }}>
+                  <td data-label="Дата регистрации" style={{ padding: '10px 16px', color: '#94a3b8', fontSize: 13 }}>
                     {new Date(u.createdAt).toLocaleString('ru-RU')}
                   </td>
                 </tr>

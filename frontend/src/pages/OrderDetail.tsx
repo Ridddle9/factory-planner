@@ -250,7 +250,7 @@ export default function OrderDetail() {
         {items.length === 0 ? (
           <div className="empty">Нет позиций. Добавьте товары из справочника.</div>
         ) : (
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Товар</th>
@@ -263,11 +263,11 @@ export default function OrderDetail() {
             <tbody>
               {items.map(item => (
                 <tr key={item.id}>
-                  <td>{item.product?.name ?? '—'}</td>
-                  <td>{item.product?.code ?? '—'}</td>
-                  <td>{item.quantity}</td>
-                  <td>{item.remainingQuantity !== undefined ? item.remainingQuantity : '—'}</td>
-                  <td>
+                  <td className="stack-title">{item.product?.name ?? '—'}</td>
+                  <td data-label="Код">{item.product?.code ?? '—'}</td>
+                  <td data-label="Количество">{item.quantity}</td>
+                  <td data-label="К обеспечению">{item.remainingQuantity !== undefined ? item.remainingQuantity : '—'}</td>
+                  <td className="stack-actions">
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => autoPlanItem(item.id)} disabled={autoPlanning}>Автоплан</button>
                     {' '}
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingItem(item)}>Изменить</button>

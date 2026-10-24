@@ -97,7 +97,8 @@ export default function Products() {
         <div className="toolbar">
           <button type="button" className="btn btn-primary" onClick={openCreate} disabled={categories.length === 0}>Добавить товар</button>
           <input
-            style={{ marginLeft: 8, padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.875rem' }}
+            className="toolbar-search"
+            style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.875rem' }}
             placeholder="Поиск по коду / названию"
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -140,7 +141,7 @@ export default function Products() {
         {filtered.length === 0 ? (
           <div className="empty">{search ? 'Ничего не найдено' : 'Нет товаров. Сначала добавьте категории.'}</div>
         ) : (
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Код</th>
@@ -153,10 +154,10 @@ export default function Products() {
             <tbody>
               {filtered.map(p => (
                 <tr key={p.id}>
-                  <td>{p.code}</td>
-                  <td>{p.name}</td>
-                  <td>{p.category?.name ?? '—'}</td>
-                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  <td data-label="Код">{p.code}</td>
+                  <td className="stack-title">{p.name}</td>
+                  <td data-label="Категория">{p.category?.name ?? '—'}</td>
+                  <td data-label="Произв. на чел./день" style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {p.teamCapacities && p.teamCapacities.length > 0 ? (
                       <button
                         type="button"
@@ -176,7 +177,7 @@ export default function Products() {
                       <span style={{ color: 'var(--text-muted)' }}>—</span>
                     )}
                   </td>
-                  <td>
+                  <td className="stack-actions">
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openEdit(p)}>Изменить</button>
                     {' '}
                     {p.capacityLocked && (
@@ -201,7 +202,7 @@ export default function Products() {
         >
           <div
             className="card"
-            style={{ minWidth: 380, maxWidth: 560, maxHeight: '80vh', overflowY: 'auto' }}
+            style={{ width: 'min(560px, calc(100vw - 24px))', maxHeight: '80vh', overflowY: 'auto' }}
             onClick={e => e.stopPropagation()}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>

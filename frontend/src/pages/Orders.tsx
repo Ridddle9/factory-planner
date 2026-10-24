@@ -150,7 +150,7 @@ export default function Orders() {
             {tab === 'active' ? 'Нет актуальных заказов.' : 'Нет архивных заказов.'}
           </div>
         ) : (
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Номер</th>
@@ -168,19 +168,19 @@ export default function Orders() {
                 const expected = info?.expectedCompletionDate ?? null
                 return (
                   <tr key={o.id}>
-                    <td><Link to={`/orders/${o.id}`}>{o.orderNumber}</Link></td>
-                    <td>{o.customer}</td>
+                    <td className="stack-title"><Link to={`/orders/${o.id}`}>{o.orderNumber}</Link></td>
+                    <td data-label="Клиент">{o.customer}</td>
                     {tab === 'active' && (
-                      <td style={{ color: expected ? '#16a34a' : 'var(--text-muted)', fontWeight: expected ? 600 : undefined }}>
+                      <td data-label="Готово по плану" style={{ color: expected ? '#16a34a' : 'var(--text-muted)', fontWeight: expected ? 600 : undefined }}>
                         {expected ? formatDate(expected) : '—'}
                       </td>
                     )}
-                    <td>
+                    <td data-label="Приоритет">
                       {(() => { const pl = priorityLabel(o.priority ?? 20); return <span style={{ color: pl.color, fontSize: '0.82rem', fontWeight: 600 }}>{pl.text}</span> })()}
                     </td>
-                    <td>{o.manager ?? '—'}</td>
-                    <td>{o.items?.length ?? 0}</td>
-                    <td>
+                    <td data-label="Менеджер">{o.manager ?? '—'}</td>
+                    <td data-label="Позиций">{o.items?.length ?? 0}</td>
+                    <td className="stack-actions">
                       <button type="button" className="btn btn-danger btn-sm" onClick={e => remove(o.id, e)}>Удалить</button>
                     </td>
                   </tr>

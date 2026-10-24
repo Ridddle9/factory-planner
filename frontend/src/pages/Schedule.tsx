@@ -77,6 +77,16 @@ type Mode = 'idle' | 'moving'
 type TeamLoad = { load: number; effectiveCapacity: number; available: number }
 
 const STICKY_W = [150, 190]
+const STICKY_W_MOBILE = [72, 112]
+const MOBILE_QUERY = '(max-width: 768px)'
+
+// Цвет полоски статуса задачи в списке дня (те же статусы, что и фон ячейки в сетке)
+const STATUS_BORDER: Record<string, string> = {
+  '#FEE2E2': '#F87171',
+  '#DCFCE7': '#4ADE80',
+  '#FEF9C3': '#FACC15',
+  '#DBEAFE': '#60A5FA',
+}
 
 export default function Schedule() {
   const today = todayISO()
@@ -96,6 +106,19 @@ export default function Schedule() {
 
   const [popup, setPopup] = useState<PopupState | null>(null)
   const [mode, setMode] = useState<Mode>('idle')
+
+  // Телефон: вид «День» (список задач дня) или «Таблица» (сетка), действия спрятаны под кнопку
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY)
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  const [mobileView, setMobileView] = useState<'day' | 'grid'>('day')
+  const [mobileDate, setMobileDate] = useState(today)
+  const [showActions, setShowActions] = useState(false)
+  const [moveDate, setMoveDate] = useState<string | null>(null)
   const [modeSource, setModeSource] = useState<{ rowId: string; date: string; cell: CellData } | null>(null)
 
   // Move warning dialog
@@ -249,16 +272,25 @@ export default function Schedule() {
   // close popup on outside click
   useEffect(() => {
     if (!popup) return
-    const handler = (e: MouseEvent) => {
+    const handler = (e: MouseEvent | TouchEvent) => {
       if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
         closePopup()
       }
     }
     document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    document.addEventListener('touchstart', handler)
+    return () => {
+      document.removeEventListener('mousedown', handler)
+      document.removeEventListener('touchstart', handler)
+    }
   }, [popup])
 
   const dates = useMemo(() => getDatesInRange(dateFrom, dateTo), [dateFrom, dateTo])
+
+  // Выбранный день на телефоне всегда внутри выбранного периода
+  useEffect(() => {
+    if (!dates.includes(mobileDate)) setMobileDate(dates.includes(today) ? today : dates[0] ?? today)
+  }, [dates, mobileDate, today])
 
   const rows = useMemo((): RowData[] => {
     const map = new Map<string, RowData>()
@@ -299,6 +331,17 @@ export default function Schedule() {
         return a.productCode.localeCompare(b.productCode, 'ru')
       })
   }, [tasks])
+
+  // При первом открытии на телефоне — ближайший день с задачами (например, если сегодня выходной)
+  const autoPickedDay = useRef(false)
+  useEffect(() => {
+    if (autoPickedDay.current || rows.length === 0) return
+    autoPickedDay.current = true
+    const hasTasks = (d: string) => rows.some(r => (r.cells[d]?.plannedQuantity ?? 0) > 0)
+    if (hasTasks(mobileDate)) return
+    const next = dates.find(d => d >= mobileDate && hasTasks(d)) ?? dates.find(hasTasks)
+    if (next) setMobileDate(next)
+  }, [rows, dates, mobileDate])
 
   // Per-date load for header bar (fractional model)
   const dateLoads = useMemo((): Record<string, DateLoad> => {
@@ -352,10 +395,12 @@ export default function Schedule() {
 
   const HEADER_BG = 'var(--sidebar-bg)'
   const HEADER_COLOR = '#e2e8f0'
-  const stickyLeft = (i: number) => STICKY_W.slice(0, i).reduce((a, b) => a + b, 0)
+  const stickyW = isMobile ? STICKY_W_MOBILE : STICKY_W
+  const stickyLeft = (i: number) => stickyW.slice(0, i).reduce((a, b) => a + b, 0)
 
   const closePopup = () => {
     setPopup(null)
+    setMoveDate(null)
     if (mode !== 'idle') {
       setMode('idle')
       setModeSource(null)
@@ -383,6 +428,7 @@ export default function Schedule() {
     setSplitQty2(cell ? Math.floor(cell.plannedQuantity / 2) : 0)
     setSplitDate2(todayISO())
     setSplitLoad(null)
+    setMoveDate(null)
     setPopup({
       rowId: row.orderItemId,
       date,
@@ -447,22 +493,38 @@ export default function Schedule() {
 
   const startMove = () => {
     if (!popup?.cell) return
+    if (isMobile && mobileView === 'day') {
+      setMoveDate(moveDate === null ? popup.date : null)
+      return
+    }
     setModeSource({ rowId: popup.rowId, date: popup.date, cell: popup.cell })
     setMode('moving')
     setPopup(null)
   }
 
-  const handleMove = async (taskId: string, fromDate: string, toDate: string, force = false) => {
+  // Перенос на дату, выбранную в окне задачи (телефон, вид «День»)
+  const confirmMobileMove = () => {
+    if (!popup?.cell || !moveDate || moveDate === popup.date) return
+    const row = rows.find(r => r.orderItemId === popup.rowId)
+    if (row?.cells[moveDate]) { setError('Эта дата уже занята для данной позиции'); return }
+    const source = { rowId: popup.rowId, date: popup.date, cell: popup.cell }
+    setModeSource(source)
+    setPopup(null)
+    setMoveDate(null)
+    handleMove(source.cell.taskId, source.date, moveDate, false, source)
+  }
+
+  const handleMove = async (taskId: string, fromDate: string, toDate: string, force = false, source = modeSource) => {
     // Check target date capacity before moving
-    if (!force && modeSource?.cell.teamId) {
-      const teamId = modeSource.cell.teamId
-      const movedQty = modeSource.cell.plannedQuantity
-      const cap = allOrderItems.find(o => o.id === modeSource.rowId)?.product?.category?.capacityPerTeamPerDay
+    if (!force && source?.cell.teamId) {
+      const teamId = source.cell.teamId
+      const movedQty = source.cell.plannedQuantity
+      const cap = allOrderItems.find(o => o.id === source.rowId)?.product?.category?.capacityPerTeamPerDay
       const { data: loadData } = await api.get<TeamLoad>(`/teams/${teamId}/load?date=${toDate}`)
       if (loadData && cap && cap > 0) {
         const overflow = Math.round((loadData.load + movedQty / cap - 1) * cap)
         if (overflow > 0) {
-          const row = rows.find(r => r.orderItemId === modeSource.rowId)
+          const row = rows.find(r => r.orderItemId === source.rowId)
           setMoveWarning({ taskId, toDate, teamName: row?.teamName ?? 'Бригада', overflowQty: overflow })
           return
         }
@@ -553,6 +615,10 @@ export default function Schedule() {
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '0.75rem', flexWrap: 'wrap' }}>
         <h1 className="page-title" style={{ margin: 0 }}>График производства</h1>
+        <button type="button" className="btn btn-secondary btn-sm schedule-actions-toggle" aria-expanded={showActions} onClick={() => setShowActions(v => !v)}>
+          {showActions ? 'Скрыть действия' : 'Действия ▾'}
+        </button>
+        <div className={showActions ? 'schedule-actions open' : 'schedule-actions'}>
         <button className="btn btn-secondary btn-sm" onClick={handleRollover} disabled={rollingOver || saving}>
           {rollingOver ? 'Переношу...' : 'Перенести недодел со вчера'}
         </button>
@@ -571,6 +637,7 @@ export default function Schedule() {
         <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowExport(v => !v)}>
           {showExport ? 'Скрыть экспорт' : '↓ Скачать Excel'}
         </button>
+        </div>
         {undoAction && (
           <button className="btn btn-secondary btn-sm" onClick={handleUndo} disabled={saving}
             style={{ borderColor: '#f59e0b', color: '#b45309' }}>
@@ -714,7 +781,7 @@ export default function Schedule() {
       )}
 
       <div className="card">
-        <div className="toolbar">
+        <div className="toolbar schedule-filters">
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             С: <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
           </label>
@@ -744,7 +811,7 @@ export default function Schedule() {
           </label>
         </div>
 
-        <div style={{ display: 'flex', gap: '1.25rem', marginBottom: '0.75rem', fontSize: '0.78rem', flexWrap: 'wrap', color: 'var(--text-muted)' }}>
+        <div className="schedule-legend" style={{ display: 'flex', gap: '1.25rem', marginBottom: '0.75rem', fontSize: '0.78rem', flexWrap: 'wrap', color: 'var(--text-muted)' }}>
           {[
             { bg: '#DBEAFE', border: '#93C5FD', label: 'Запланировано' },
             { bg: '#DCFCE7', border: '#86EFAC', label: 'Выполнено' },
@@ -756,19 +823,89 @@ export default function Schedule() {
               {label}
             </span>
           ))}
-          <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>· Кликните ячейку для редактирования</span>
+          <span className="desktop-only" style={{ color: 'var(--text-muted)', marginLeft: 8 }}>· Кликните ячейку для редактирования</span>
         </div>
+
+        {isMobile && (
+          <div className="view-switch" role="tablist">
+            <button type="button" role="tab" aria-selected={mobileView === 'day'} className={mobileView === 'day' ? 'active' : ''} onClick={() => setMobileView('day')}>День</button>
+            <button type="button" role="tab" aria-selected={mobileView === 'grid'} className={mobileView === 'grid' ? 'active' : ''} onClick={() => setMobileView('grid')}>Таблица</button>
+          </div>
+        )}
 
         {loading ? (
           <div className="empty">Загрузка...</div>
         ) : rows.length === 0 ? (
           <div className="empty">Нет задач за выбранный период.</div>
+        ) : isMobile && mobileView === 'day' ? (
+          <>
+            <div className="day-chips">
+              {dates.map(d => {
+                const count = rows.filter(r => (r.cells[d]?.plannedQuantity ?? 0) > 0).length
+                return (
+                  <button key={d} type="button"
+                    className={['day-chip', d === mobileDate ? 'active' : '', isWeekend(d) ? 'weekend' : '', d === today ? 'today' : ''].filter(Boolean).join(' ')}
+                    onClick={() => setMobileDate(d)}>
+                    <span>{formatDayOfWeek(d)}</span>
+                    <strong>{formatDateShort(d)}</strong>
+                    <small>{count > 0 ? `${count} поз.` : '—'}</small>
+                  </button>
+                )
+              })}
+            </div>
+            {(() => {
+              const dayRows = rows.filter(r => (r.cells[mobileDate]?.plannedQuantity ?? 0) > 0)
+              if (dayRows.length === 0) return <div className="empty">На {formatDateShort(mobileDate)} задач нет.</div>
+              const groups: { workshop: string; teams: { team: string; rows: RowData[] }[] }[] = []
+              for (const row of dayRows) {
+                let ws = groups[groups.length - 1]
+                if (!ws || ws.workshop !== row.workshopName) { ws = { workshop: row.workshopName, teams: [] }; groups.push(ws) }
+                let tm = ws.teams[ws.teams.length - 1]
+                if (!tm || tm.team !== row.teamName) { tm = { team: row.teamName, rows: [] }; ws.teams.push(tm) }
+                tm.rows.push(row)
+              }
+              return groups.map(ws => (
+                <div key={ws.workshop} className="day-group">
+                  <div className="day-group-title">{ws.workshop}</div>
+                  {ws.teams.map(tm => {
+                    const plan = tm.rows.reduce((s, r) => s + (r.cells[mobileDate]?.plannedQuantity ?? 0), 0)
+                    const fact = tm.rows.reduce((s, r) => s + (r.cells[mobileDate]?.actualQuantity ?? 0), 0)
+                    return (
+                      <div key={tm.team}>
+                        <div className="day-team-title">
+                          <span>{tm.team}</span>
+                          <span>план {plan} · факт {fact}</span>
+                        </div>
+                        {tm.rows.map(row => {
+                          const cell = row.cells[mobileDate]!
+                          return (
+                            <button key={row.orderItemId} type="button" className="day-task"
+                              style={{ borderLeftColor: STATUS_BORDER[cellBg(cell, mobileDate)] ?? 'var(--border)' }}
+                              onClick={e => openPopup(e, row, mobileDate, cell)}>
+                              <span className="day-task-main">
+                                <strong>{row.orderNumber}</strong>
+                                <span>{row.productName || row.productCode}</span>
+                              </span>
+                              <span className="day-task-qty">
+                                <strong>{cell.plannedQuantity}</strong>
+                                {cell.actualQuantity !== null && <span>✓{cell.actualQuantity}</span>}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
+              ))
+            })()}
+          </>
         ) : (
           <div style={{ overflowX: 'auto', position: 'relative', cursor: cursorStyle }}>
             <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed' }}>
               <colgroup>
-                <col style={{ width: STICKY_W[0] }} />
-                <col style={{ width: STICKY_W[1] }} />
+                <col style={{ width: stickyW[0] }} />
+                <col style={{ width: stickyW[1] }} />
                 {dates.map(d => <col key={d} style={{ width: 70 }} />)}
               </colgroup>
               <thead>
@@ -957,10 +1094,12 @@ export default function Schedule() {
         </div>
       )}
 
-      {/* Cell popup */}
+      {/* Cell popup (на телефоне — шторка снизу) */}
+      {popup && isMobile && <div className="sheet-backdrop" />}
       {popup && (
         <div
           ref={popupRef}
+          className="cell-popup"
           style={{
             position: 'fixed',
             left: Math.min(popup.x, window.innerWidth - 280),
@@ -990,6 +1129,9 @@ export default function Schedule() {
             </div>
             <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--text-muted)', lineHeight: 1 }} onClick={closePopup}>✕</button>
           </div>
+          {isMobile && error && (
+            <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>{error} ✕</div>
+          )}
 
           {popup.cell ? (
             <>
@@ -997,10 +1139,10 @@ export default function Schedule() {
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
                 <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Кол-во</label>
                 <input
-                  type="number" min={0} value={editQty}
+                  type="number" inputMode="numeric" min={0} value={editQty}
                   onChange={e => setEditQty(Number(e.target.value))}
                   style={{ width: 70 }}
-                  autoFocus
+                  autoFocus={!isMobile}
                 />
                 {popup.cell.actualQuantity !== null && (
                   <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>✓{popup.cell.actualQuantity}</span>
@@ -1018,9 +1160,17 @@ export default function Schedule() {
                   <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleCreateOrUpdate} disabled={saving}>
                     Сохранить
                   </button>
+                  {moveDate !== null && (
+                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                      <input type="date" value={moveDate} onChange={e => setMoveDate(e.target.value)} style={{ flex: 1, minWidth: 0 }} aria-label="Перенести на дату" />
+                      <button className="btn btn-primary" onClick={confirmMobileMove} disabled={saving || !moveDate || moveDate === popup.date}>
+                        Перенести
+                      </button>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
                     <button className="btn btn-secondary" style={{ flex: 1 }} onClick={startMove}>
-                      Перенести →
+                      {moveDate !== null ? 'Отмена' : 'Перенести →'}
                     </button>
                     <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowSplitForm(true)}>
                       Разбить ÷
@@ -1047,7 +1197,7 @@ export default function Schedule() {
                       Перенести на другую дату (шт)
                     </label>
                     <input
-                      type="number" min={1} max={popup.cell.plannedQuantity - 1}
+                      type="number" inputMode="numeric" min={1} max={popup.cell.plannedQuantity - 1}
                       value={splitQty2}
                       onChange={e => {
                         const v = Math.min(popup.cell!.plannedQuantity - 1, Math.max(1, Number(e.target.value)))
@@ -1055,7 +1205,7 @@ export default function Schedule() {
                         setSplitLoad(null)
                       }}
                       style={{ width: '100%' }}
-                      autoFocus
+                      autoFocus={!isMobile}
                     />
                   </div>
                   <div>
@@ -1129,10 +1279,10 @@ export default function Schedule() {
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
                 <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Кол-во</label>
                 <input
-                  type="number" min={0} value={editQty}
+                  type="number" inputMode="numeric" min={0} value={editQty}
                   onChange={e => setEditQty(Number(e.target.value))}
                   style={{ width: 70 }}
-                  autoFocus
+                  autoFocus={!isMobile}
                 />
               </div>
               <div style={{ marginBottom: '0.75rem' }}>
