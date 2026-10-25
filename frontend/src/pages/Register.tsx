@@ -62,7 +62,7 @@ export default function Register() {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
       <div className="card" style={{ width: 400, maxWidth: '100%', padding: '2rem' }}>
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>⚙</div>
+          <img src="/icon-192.png" alt="" width={56} height={56} style={{ borderRadius: 12, marginBottom: 8 }} />
           <h2 style={{ margin: 0 }}>Регистрация</h2>
           <p style={{ color: '#64748b', margin: '4px 0 0', fontSize: 13 }}>
             Первый пользователь компании становится руководителем

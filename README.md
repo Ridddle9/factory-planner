@@ -127,6 +127,10 @@ cd frontend && npm install && npm run dev
 | `JWT_SECRET` | Секрет для JWT (32+ символов) | `xK9mP2qL8nR5vT3w` |
 | `NODE_ENV` | Окружение | `production` |
 | `PORT` | Порт Express | `3000` |
+| `YANDEX_API_KEY` | API-ключ сервисного аккаунта Yandex AI Studio (роль `ai.languageModels.user`) — для «Помощника». Без него страница отвечает «не настроен» | `AQVN…` |
+| `YANDEX_FOLDER_ID` | ID каталога Yandex Cloud | `b1g…` |
+| `YANDEX_MODEL` | Модель (необязательно) | `aliceai-llm` (по умолчанию) или `aliceai-llm-flash` |
+| `YANDEX_API_BASE` | Адрес API (необязательно) | `https://ai.api.cloud.yandex.net/v1` |
 
 > `SYNC_TOKEN` больше не нужен — у каждой компании свой токен, хранится в БД.
 
@@ -779,6 +783,16 @@ sqlite3 /home/ridddle/factory-planner/prisma/prisma/prod.db \
 ## История изменений
 
 ### [текущая] — октябрь 2026
+
+#### Чат-помощник на Alice AI
+
+Страница «Помощник» (`/assistant`): вопрос в свободной форме → ответ по данным из базы.
+
+- **Как устроено (`src/assistant.ts`):** `POST /assistant/chat` отправляет историю чата в Yandex AI Studio (OpenAI-совместимый Chat Completions, `gpt://<folder>/aliceai-llm`) со списком функций. Модель сама SQL не пишет — она вызывает наши функции только для чтения, бэкенд выполняет их с `companyId` пользователя и возвращает результат; до 6 шагов на вопрос.
+- **Функции:** `find_orders`, `get_order`, `team_schedule`, `team_load`, `find_products`, `unplanned_items`, `orders_by_finish_date`, `list_teams`. Загрузка считается так же, как в планировщике (`loadShare` или штуки / норма × численность).
+- **Отладка:** `POST /assistant/tool/<имя>` с аргументами в теле — вызвать функцию без модели (только ADMIN). Вопросы и вызванные функции пишутся в лог pm2 строкой `[assistant]`.
+- **Фронт (`pages/Assistant.tsx`):** чат с подсказками-вопросами, под ответом — какие данные смотрел; история живёт до закрытия вкладки (`sessionStorage`).
+- Иконка-завод вместо шестерёнки в шапке, меню и на входе.
 
 #### Мобильная версия (iPhone)
 

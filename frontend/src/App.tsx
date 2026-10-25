@@ -15,6 +15,7 @@ import Schedule from './pages/Schedule'
 import Planning from './pages/Planning'
 import Import from './pages/Import'
 import Onboarding from './pages/Onboarding'
+import Assistant from './pages/Assistant'
 
 function OnboardingRoute() {
   const { user, loading } = useAuth()
@@ -50,6 +51,7 @@ function ProtectedRoutes() {
         <Route path="/schedule" element={<Schedule />} />
         <Route path="/planning" element={<Planning />} />
         <Route path="/import" element={<Import />} />
+        <Route path="/assistant" element={<Assistant />} />
         {user.role === 'ADMIN' && (
           <Route path="/admin/approvals" element={<AdminApproval />} />
         )}

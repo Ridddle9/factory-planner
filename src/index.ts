@@ -8,6 +8,7 @@ import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
 import path from "path";
 import { randomUUID } from "crypto";
+import { registerAssistant } from "./assistant";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -4745,6 +4746,10 @@ app.get("/planning/unplanned-production", async (req: Request, res: Response) =>
 
   res.json({ date: latest.date, count: items.length, items });
 });
+
+// ─── Чат-помощник (Alice AI) ─────────────────────────────────────────────────
+
+registerAssistant(app, prisma as unknown as PrismaClient);
 
 // ─── Продакшн: SPA fallback ──────────────────────────────────────────────────
 

@@ -13,6 +13,7 @@ const PAGE_TITLES: [string, string][] = [
   ['/planning', 'Аналитика'],
   ['/plan', 'План на день'],
   ['/import', 'Импорт Excel'],
+  ['/assistant', 'Помощник'],
   ['/admin/approvals', 'Заявки на доступ'],
 ]
 
@@ -39,12 +40,12 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
           <span /><span /><span />
         </button>
         <div className="mobile-bar-title">{pageTitle}</div>
-        <div className="nav-logo-icon">⚙</div>
+        <img className="nav-logo-icon" src="/icon-192.png" alt="" />
       </header>
       {menuOpen && <div className="nav-backdrop" onClick={() => setMenuOpen(false)} />}
       <nav className={menuOpen ? 'nav open' : 'nav'}>
         <div className="nav-logo">
-          <div className="nav-logo-icon">⚙</div>
+          <img className="nav-logo-icon" src="/icon-192.png" alt="" />
           <div>
             <h1>Factory Planner</h1>
             <span>Производственное планирование</span>
@@ -66,6 +67,7 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
               <li><NavLink to="/orders" className={({ isActive }) => isActive ? 'active' : ''}>Заказы</NavLink></li>
               <li><NavLink to="/schedule" className={({ isActive }) => isActive ? 'active' : ''}>График</NavLink></li>
               <li><NavLink to="/planning" className={({ isActive }) => isActive ? 'active' : ''}>Аналитика</NavLink></li>
+              <li><NavLink to="/assistant" className={({ isActive }) => isActive ? 'active' : ''}>Помощник</NavLink></li>
               <li><NavLink to="/import" className={({ isActive }) => isActive ? 'active' : ''}>Импорт Excel</NavLink></li>
             </ul>
           </li>
