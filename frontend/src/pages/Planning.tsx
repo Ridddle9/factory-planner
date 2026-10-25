@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { api } from '../api'
-import type { DailyTask, Team } from '../types'
+import type { Team } from '../types'
+import TeamLoad from './TeamLoad'
 
 interface OrderCompletion {
   orderId: string
@@ -19,13 +20,10 @@ interface OrderCompletion {
   replanCount: number
 }
 
+// Сегодня по местному времени (toISOString дал бы дату по UTC — ночью по Москве это ещё вчера)
 function todayISO() {
-  return new Date().toISOString().slice(0, 10)
-}
-function addDays(iso: string, days: number) {
-  const d = new Date(iso)
-  d.setDate(d.getDate() + days)
-  return d.toISOString().slice(0, 10)
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 function formatDate(s: string) {
   return new Date(s).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
@@ -36,56 +34,11 @@ function formatDateFull(s: string) {
 function daysDiff(a: string, b: string) {
   return Math.round((new Date(a).getTime() - new Date(b).getTime()) / 86400000)
 }
-function getDatesInRange(from: string, to: string) {
-  const dates: string[] = []
-  const cur = new Date(from)
-  const end = new Date(to)
-  while (cur <= end) { dates.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 1) }
-  return dates
-}
-function isWeekend(iso: string) {
-  const d = new Date(iso + 'T00:00:00').getDay()
-  return d === 0 || d === 6
-}
-
-interface UnderloadItem {
-  teamId: string; teamName: string; date: string
-  planned: number; loadFraction: number; utilization: number
-}
-interface TeamLoadCategory {
-  categoryId: string; categoryName: string; capacity: number; planned: number; utilization: number
-}
-interface TeamLoadDay {
-  date: string; totalLoadFraction: number; categories: Record<string, TeamLoadCategory>
-}
-
 type Tab = 'team-load' | 'orders-completion' | 'fact-day' | 'unplanned'
-type TeamLoadSubMode = 'brigade' | 'overload' | 'underload'
 
-
-function UtilBar({ value, capacity }: { value: number; capacity: number }) {
-  const pct = capacity > 0 ? Math.min(100, (value / capacity) * 100) : 0
-  const color = pct >= 90 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)'
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 8, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden', minWidth: 80 }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.3s' }} />
-      </div>
-      <span style={{ fontSize: '0.78rem', fontWeight: 600, color, minWidth: 38, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
-    </div>
-  )
-}
 
 export default function Planning() {
   const [tab, setTab] = useState<Tab>('team-load')
-  const [subMode, setSubMode] = useState<TeamLoadSubMode>('brigade')
-  const [dateFrom, setDateFrom] = useState(todayISO())
-  const [dateTo, setDateTo] = useState(addDays(todayISO(), 13))
-  const [teamId, setTeamId] = useState('')
-
-  const [overloadTasks, setOverloadTasks] = useState<DailyTask[]>([])
-  const [underloaded, setUnderloaded] = useState<UnderloadItem[]>([])
-  const [teamLoad, setTeamLoad] = useState<{ teamName: string; loads: TeamLoadDay[] } | null>(null)
   const [ordersCompletion, setOrdersCompletion] = useState<OrderCompletion[]>([])
   const [completionSearch, setCompletionSearch] = useState('')
 
@@ -106,34 +59,6 @@ export default function Planning() {
   useEffect(() => {
     api.get<Team[]>('/teams').then(({ data }) => data && setTeams(data))
   }, [])
-
-  const loadOverload = async () => {
-    setLoading(true); setError(null)
-    const params = new URLSearchParams({ dateFrom })
-    if (dateTo) params.set('dateTo', dateTo)
-    const { data, error: e } = await api.get<{ count: number; tasks: DailyTask[] }>(`/planning/overload?${params}`)
-    setLoading(false)
-    if (e) setError(e); else setOverloadTasks(data?.tasks ?? [])
-  }
-
-  const loadUnderload = async () => {
-    setLoading(true); setError(null)
-    const { data, error: e } = await api.get<{ count: number; underloaded: UnderloadItem[] }>(
-      `/planning/underload?dateFrom=${dateFrom}&dateTo=${dateTo}`
-    )
-    setLoading(false)
-    if (e) setError(e); else setUnderloaded(data?.underloaded ?? [])
-  }
-
-  const loadTeamLoad = async () => {
-    if (!teamId) return
-    setLoading(true); setError(null)
-    const { data, error: e } = await api.get<{ teamName: string; loads: TeamLoadDay[] }>(
-      `/planning/team-load?teamId=${teamId}&dateFrom=${dateFrom}&dateTo=${dateTo}`
-    )
-    setLoading(false)
-    if (e) setError(e); else setTeamLoad(data ? { teamName: data.teamName, loads: data.loads ?? [] } : null)
-  }
 
   const loadOrdersCompletion = async () => {
     setLoading(true); setError(null)
@@ -161,50 +86,7 @@ export default function Planning() {
     if (tab === 'orders-completion') loadOrdersCompletion()
     if (tab === 'fact-day') loadFactDay(factDayDate)
     if (tab === 'unplanned') loadUnplanned()
-  }, [tab, dateFrom, dateTo])
-
-  useEffect(() => {
-    if (tab === 'team-load' && subMode === 'brigade' && teamId) loadTeamLoad()
-    if (tab === 'team-load' && subMode === 'overload') loadOverload()
-    if (tab === 'team-load' && subMode === 'underload') loadUnderload()
-  }, [tab, subMode, teamId, dateFrom, dateTo])
-
-  // ── Перегрузка: группировка по заказу ────────────────────────────
-  const overloadByOrder = useMemo(() => {
-    const map = new Map<string, { orderNumber: string; tasks: DailyTask[] }>()
-    for (const t of overloadTasks) {
-      const orderId = t.orderItem?.order?.orderNumber ?? '—'
-      if (!map.has(orderId)) map.set(orderId, {
-        orderNumber: t.orderItem?.order?.orderNumber ?? '—',
-        tasks: [],
-      })
-      map.get(orderId)!.tasks.push(t)
-    }
-    return Array.from(map.values())
-  }, [overloadTasks])
-
-  // ── Недогрузка: группировка по бригаде ───────────────────────────
-  const underloadByTeam = useMemo(() => {
-    const map = new Map<string, { teamName: string; days: UnderloadItem[] }>()
-    for (const u of underloaded) {
-      if (!map.has(u.teamId)) map.set(u.teamId, { teamName: u.teamName, days: [] })
-      map.get(u.teamId)!.days.push(u)
-    }
-    return Array.from(map.values()).sort((a, b) => a.teamName.localeCompare(b.teamName, 'ru'))
-  }, [underloaded])
-
-  // ── Загрузка бригады: матрица категория × дата ────────────────────
-  const teamLoadMatrix = useMemo(() => {
-    if (!teamLoad) return null
-    const catMap = new Map<string, { name: string; data: Map<string, TeamLoadCategory> }>()
-    for (const day of teamLoad.loads) {
-      for (const cat of Object.values(day.categories)) {
-        if (!catMap.has(cat.categoryId)) catMap.set(cat.categoryId, { name: cat.categoryName, data: new Map() })
-        catMap.get(cat.categoryId)!.data.set(day.date.slice(0, 10), cat)
-      }
-    }
-    return Array.from(catMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'ru'))
-  }, [teamLoad])
+  }, [tab])
 
   // ── Завершение заказов: фильтрация и счётчики ─────────────────────
   const filteredOrders = useMemo(() => {
@@ -224,8 +106,6 @@ export default function Planning() {
     notPlanned: ordersCompletion.filter(o => o.totalPlanned === 0).length,
   }), [ordersCompletion])
 
-  const dates = useMemo(() => getDatesInRange(dateFrom, dateTo), [dateFrom, dateTo])
-
   const HEADER_BG = 'var(--sidebar-bg)'
   const HEADER_COLOR = '#e2e8f0'
 
@@ -241,7 +121,7 @@ export default function Planning() {
         {/* Табы */}
         <div className="tabs" style={{ marginBottom: '1.25rem' }}>
           {([
-            ['team-load',         'Загрузка бригады'],
+            ['team-load',         'Загрузка бригад'],
             ['orders-completion', 'Завершение заказов'],
             ['fact-day',          'Факт за день'],
             ['unplanned',         'Незапланированный факт'],
@@ -255,210 +135,8 @@ export default function Planning() {
           ))}
         </div>
 
-        {/* ── ЗАГРУЗКА БРИГАДЫ (+ перегрузка / недогрузка) ── */}
-        {tab === 'team-load' && (
-          <>
-            <div className="toolbar">
-              {subMode === 'brigade' && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  Бригада:
-                  <select value={teamId} onChange={e => setTeamId(e.target.value)} style={{ width: 220 }}>
-                    <option value="">— выберите —</option>
-                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                </label>
-              )}
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                С: <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                По: <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-              </label>
-              <div style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                <button
-                  type="button"
-                  className={`btn btn-sm ${subMode === 'brigade' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setSubMode('brigade')}
-                >По бригаде</button>
-                <button
-                  type="button"
-                  className={`btn btn-sm ${subMode === 'overload' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setSubMode('overload')}
-                >
-                  Перегруженные
-                  {overloadTasks.length > 0 && subMode !== 'overload' && (
-                    <span className="badge badge-danger" style={{ marginLeft: 5 }}>{overloadTasks.length}</span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className={`btn btn-sm ${subMode === 'underload' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setSubMode('underload')}
-                >Недогруженные</button>
-              </div>
-              {loading && <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Загрузка…</span>}
-            </div>
-
-            {/* По бригаде */}
-            {subMode === 'brigade' && (
-              <>
-                {!teamId && <div className="empty">Выберите бригаду.</div>}
-                {teamId && !loading && !teamLoad && <div className="empty">Нет данных.</div>}
-                {teamLoad && teamLoadMatrix && (
-                  <>
-                    <h3 style={{ margin: '0 0 0.75rem', fontWeight: 700 }}>{teamLoad.teamName}</h3>
-                    {teamLoadMatrix.length === 0 ? (
-                      <div className="empty">Нет задач за период.</div>
-                    ) : (
-                      <div style={{ overflowX: 'auto' }}>
-                        <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed' }}>
-                          <colgroup>
-                            <col className="sticky-col-width" style={{ width: 220 }} />
-                            {dates.map(d => <col key={d} style={{ width: 72 }} />)}
-                          </colgroup>
-                          <thead>
-                            <tr>
-                              <th className="sticky-col" style={{
-                                position: 'sticky', left: 0, zIndex: 2, background: HEADER_BG, color: HEADER_COLOR,
-                                padding: '6px 10px', textAlign: 'left', borderRight: '2px solid var(--primary)',
-                                fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase',
-                              }}>Категория</th>
-                              {dates.map(d => (
-                                <th key={d} style={{
-                                  background: isWeekend(d) ? '#1e2d3d' : HEADER_BG, color: isWeekend(d) ? '#64748b' : HEADER_COLOR,
-                                  padding: '4px 2px', textAlign: 'center', borderRight: '1px solid rgba(255,255,255,0.07)',
-                                }}>
-                                  <div style={{ fontSize: '0.65rem', opacity: 0.7 }}>{new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
-                                  <div style={{ fontSize: '0.75rem' }}>{formatDate(d)}</div>
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {teamLoadMatrix.map((cat, ri) => (
-                              <tr key={cat.name} style={{ background: ri % 2 === 0 ? '#fff' : '#f8fafc' }}>
-                                <td className="sticky-col" style={{
-                                  position: 'sticky', left: 0, zIndex: 1, background: ri % 2 === 0 ? '#fff' : '#f8fafc',
-                                  padding: '5px 10px', borderRight: '2px solid var(--primary)',
-                                  fontWeight: 500, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                }} title={cat.name}>{cat.name}</td>
-                                {dates.map(d => {
-                                  const cell = cat.data.get(d)
-                                  if (!cell) return (
-                                    <td key={d} style={{ borderRight: '1px solid #e2e8f0', background: isWeekend(d) ? '#f8fafc' : undefined }} />
-                                  )
-                                  const pct = cell.capacity > 0 ? Math.min(100, (cell.planned / cell.capacity) * 100) : 0
-                                  const bg = pct >= 90 ? '#DCFCE7' : pct >= 50 ? '#FEF9C3' : '#FEE2E2'
-                                  const col = pct >= 90 ? '#16a34a' : pct >= 50 ? '#d97706' : '#dc2626'
-                                  return (
-                                    <td key={d} style={{ textAlign: 'center', padding: '3px 2px', borderRight: '1px solid #e2e8f0', background: bg }}
-                                      title={`${cell.planned} / ${cell.capacity} (${pct.toFixed(0)}%)`}>
-                                      <div style={{ fontWeight: 700, fontSize: '0.82rem', color: col }}>{cell.planned}</div>
-                                      <div style={{ fontSize: '0.65rem', color: '#6b7280' }}>{pct.toFixed(0)}%</div>
-                                    </td>
-                                  )
-                                })}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-
-            {/* Перегруженные */}
-            {subMode === 'overload' && (
-              overloadTasks.length === 0 && !loading ? (
-                <div className="empty">Нет перегруженных задач за период.</div>
-              ) : (
-                <div>
-                  {overloadByOrder.map(group => (
-                    <div key={group.orderNumber} style={{ marginBottom: '1rem' }}>
-                      <div style={{
-                        display: 'flex', alignItems: 'center', gap: 10,
-                        background: '#fef2f2', border: '1px solid #fecaca',
-                        borderRadius: '6px 6px 0 0', padding: '6px 12px',
-                      }}>
-                        <span style={{ fontWeight: 700 }}>{group.orderNumber}</span>
-                        <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: 'var(--text-muted)' }}>{group.tasks.length} задач</span>
-                      </div>
-                      <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', borderTop: 'none' }}>
-                        <thead>
-                          <tr style={{ background: '#fff5f5', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
-                            <th style={{ padding: '4px 12px', textAlign: 'left' }}>Дата</th>
-                            <th style={{ padding: '4px 12px', textAlign: 'left' }}>Товар</th>
-                            <th style={{ padding: '4px 12px', textAlign: 'right' }}>План</th>
-                            <th style={{ padding: '4px 12px', textAlign: 'left' }}>Бригада</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {group.tasks.map(t => (
-                            <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                              <td className="stack-title" style={{ padding: '5px 12px', fontWeight: 600 }}>{formatDateFull(t.date)}</td>
-                              <td data-label="Товар" style={{ padding: '5px 12px', fontSize: '0.85rem' }}><span style={{ fontWeight: 600 }}>{t.orderItem?.product?.code ?? '—'}</span></td>
-                              <td data-label="План" style={{ padding: '5px 12px', textAlign: 'right' }}>{t.plannedQuantity}</td>
-                              <td data-label="Бригада" style={{ padding: '5px 12px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>{t.team?.name ?? '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ))}
-                </div>
-              )
-            )}
-
-            {/* Недогруженные */}
-            {subMode === 'underload' && (
-              underloaded.length === 0 && !loading ? (
-                <div className="empty">Нет недогруженных дней за период.</div>
-              ) : (
-                <div>
-                  {underloadByTeam.map(group => {
-                    const avgUtil = group.days.reduce((s, d) => s + d.utilization, 0) / group.days.length
-                    return (
-                      <div key={group.teamName} style={{ marginBottom: '1.25rem' }}>
-                        <div style={{
-                          display: 'flex', alignItems: 'center', gap: 12,
-                          background: 'var(--sidebar-bg)', color: HEADER_COLOR,
-                          borderRadius: '6px 6px 0 0', padding: '6px 12px',
-                        }}>
-                          <span style={{ fontWeight: 700 }}>{group.teamName}</span>
-                          <span style={{ fontSize: '0.78rem', opacity: 0.75 }}>
-                            {group.days.length} дн. · ср. загрузка: {avgUtil.toFixed(0)}%
-                          </span>
-                        </div>
-                        <table className="stack" style={{ width: '100%', borderCollapse: 'collapse' }}>
-                          <thead>
-                            <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
-                              <th style={{ padding: '4px 12px', textAlign: 'left' }}>Дата</th>
-                              <th style={{ padding: '4px 12px', textAlign: 'right' }}>Загрузка</th>
-                              <th style={{ padding: '4px 12px', textAlign: 'right' }}>Свободно</th>
-                              <th style={{ padding: '4px 12px', width: 200 }}>График</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {group.days.map((u, i) => (
-                              <tr key={`${u.teamId}-${u.date}-${i}`} style={{ borderBottom: '1px solid var(--border)' }}>
-                                <td className="stack-title" style={{ padding: '5px 12px', fontWeight: 600 }}>{formatDateFull(u.date)}</td>
-                                <td data-label="Загрузка" style={{ padding: '5px 12px', textAlign: 'right' }}>{u.utilization.toFixed(0)}%</td>
-                                <td data-label="Свободно" style={{ padding: '5px 12px', textAlign: 'right', color: 'var(--warning)', fontWeight: 600 }}>{(100 - u.utilization).toFixed(0)}%</td>
-                                <td className="stack-block" style={{ padding: '5px 12px' }}><UtilBar value={u.loadFraction} capacity={1} /></td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            )}
-          </>
-        )}
+        {/* ── ЗАГРУЗКА БРИГАД ── */}
+        {tab === 'team-load' && <TeamLoad teams={teams} />}
 
         {/* ── ЗАВЕРШЕНИЕ ЗАКАЗОВ ── */}
         {tab === 'orders-completion' && (

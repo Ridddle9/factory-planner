@@ -975,6 +975,27 @@ function mapPriority(p?: string): number {
 }
 
 
+// Факт из синка: сколько штук позиции обеспечено с прошлого синка (остаток «к обеспечению» уменьшился).
+// Пишется в задачу позиции за сегодня — к уже внесённому за день прибавляется, а не затирается.
+// Если задачи на сегодня нет — создаётся строка факта на бригаду, у которой позиция в плане.
+async function recordSyncFact(orderItemId: string, qty: number, todayMs: number): Promise<void> {
+  if (qty <= 0) return;
+  const date = new Date(todayMs);
+  const today = await prisma.dailyTask.findUnique({ where: { orderItemId_date: { orderItemId, date } } });
+  if (today) {
+    await prisma.dailyTask.update({ where: { id: today.id }, data: { actualQuantity: (today.actualQuantity ?? 0) + qty } });
+    return;
+  }
+  const tasks = await prisma.dailyTask.findMany({
+    where: { orderItemId, teamId: { not: null }, plannedQuantity: { gt: 0 } },
+    select: { date: true, teamId: true },
+  });
+  const nearest = tasks.sort((a, b) => Math.abs(a.date.getTime() - todayMs) - Math.abs(b.date.getTime() - todayMs))[0];
+  await prisma.dailyTask.create({
+    data: { orderItemId, date, plannedQuantity: 0, actualQuantity: qty, teamId: nearest?.teamId ?? null },
+  });
+}
+
 app.post("/sync/1c", async (req: Request, res: Response) => {
   const authHeader = req.headers["authorization"] as string | undefined;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -987,7 +1008,8 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
   }
   const companyId = syncCompany.id;
 
-  const { orders, categories, teams, teamCategories, fact, capacity } = req.body as {
+  // fact из 1С (остаток «Не обеспечен» по своему запросу) больше не используется — факт считается по позициям заказов
+  const { orders, categories, teams, teamCategories, capacity } = req.body as {
     orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number; transferDate?: string }[] }[];
     categories: { code: string; name: string; capacity?: number }[];
     teams: { code: string; name: string; workshopName?: string; headcount?: number }[];
@@ -997,14 +1019,14 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
   };
 
   const stats = { categories: 0, teams: 0, products: 0, orders: 0, orderItems: 0, categoryTeamLinks: 0, factRecords: 0, capacityRecords: 0 };
-  const factSkipped = { noOrder: 0, noProduct: 0, noOrderItem: 0 };
+  // Пропало сразу много заказов — скорее всего синк не из той базы: факт за весь синк не пишем
+  let factGuard: string | null = null;
 
   console.log("[sync/1c] received:", {
     orders: orders?.length ?? 0,
     categories: categories?.length ?? 0,
     teams: teams?.length ?? 0,
     teamCategories: teamCategories?.length ?? 0,
-    fact: fact?.length ?? 0,
     capacity: capacity?.length ?? 0,
     sampleTeams: teams?.slice(0, 5).map(t => t.name),
     orderNumbers: orders?.map(o => o.number),
@@ -1076,51 +1098,39 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
 
   const ACTIVE_STATUSES = new Set(['КОбеспечению', 'КОтгрузке']);
 
-  // Деактивировать заказы которых нет в текущем синке
-  const incomingOrderRefs = new Set((orders ?? []).filter(o => o.ref).map(o => o.ref as string));
-  const incomingOrderNumbers = new Set((orders ?? []).map(o => o.number));
-  if (incomingOrderRefs.size > 0) {
-    await prisma.order.updateMany({
-      where: { companyId, active: true, orderRef: { notIn: Array.from(incomingOrderRefs) } },
-      data: { active: false },
-    });
-  } else if (incomingOrderNumbers.size > 0) {
-    await prisma.order.updateMany({
-      where: { companyId, active: true, orderNumber: { notIn: Array.from(incomingOrderNumbers) } },
-      data: { active: false },
-    });
-  }
-
   const todayMs = (() => {
     const msk = new Date(Date.now() + 3 * 60 * 60 * 1000);
     msk.setUTCHours(0, 0, 0, 0);
     return msk.getTime();
   })();
 
-  // Факт обрабатывается ДО заказов: orderItem.quantity на этот момент = НеОбеспечен прошлого синка.
-  // Дельта = prevRemaining - currRemaining = сколько произвели с прошлого синка.
-  for (const factEntry of (fact ?? [])) {
-    const { orderNumber, productCode, remaining } = factEntry;
-    if (!orderNumber || !productCode || remaining == null) continue;
-
-    const order = await prisma.order.findFirst({ where: { orderNumber, companyId, active: true } });
-    if (!order) { factSkipped.noOrder++; continue; }
-
-    const product = await prisma.product.findUnique({ where: { code_companyId: { code: productCode, companyId } } });
-    if (!product) { factSkipped.noProduct++; continue; }
-
-    const orderItem = await prisma.orderItem.findFirst({ where: { orderId: order.id, productId: product.id } });
-    if (!orderItem) { factSkipped.noOrderItem++; continue; }
-
-    const todayDelta = Math.max(0, orderItem.quantity - Number(remaining));
-    if (todayDelta <= 0) continue;
-
-    await prisma.dailyTask.upsert({
-      where: { orderItemId_date: { orderItemId: orderItem.id, date: new Date(todayMs) } },
-      update: { actualQuantity: todayDelta },
-      create: { orderItemId: orderItem.id, date: new Date(todayMs), plannedQuantity: 0, actualQuantity: todayDelta },
-    });
-    stats.factRecords++;
+  // Деактивировать заказы которых нет в текущем синке
+  const incomingOrderRefs = new Set((orders ?? []).filter(o => o.ref).map(o => o.ref as string));
+  const incomingOrderNumbers = new Set((orders ?? []).map(o => o.number));
+  const vanishedWhere = incomingOrderRefs.size > 0
+    ? { companyId, active: true, orderRef: { notIn: Array.from(incomingOrderRefs) } }
+    : incomingOrderNumbers.size > 0
+      ? { companyId, active: true, orderNumber: { notIn: Array.from(incomingOrderNumbers) } }
+      : null;
+  if (vanishedWhere) {
+    // Заказ пропал из выгрузки — его остаток обеспечен (или заказ закрыт): остаток идёт в факт, позиции обнуляются
+    const [vanished, activeBefore] = await Promise.all([
+      prisma.order.findMany({ where: vanishedWhere, select: { id: true, items: { where: { quantity: { gt: 0 } }, select: { id: true, quantity: true } } } }),
+      prisma.order.count({ where: { companyId, active: true } }),
+    ]);
+    if (vanished.length > Math.max(20, activeBefore * 0.3)) {
+      factGuard = `из выгрузки пропало ${vanished.length} из ${activeBefore} активных заказов — факт за этот синк не записан (синк не из рабочей базы?)`;
+      console.warn(`[sync/1c] ${factGuard}`);
+    } else {
+      for (const o of vanished) {
+        for (const it of o.items) {
+          await recordSyncFact(it.id, it.quantity, todayMs);
+          stats.factRecords++;
+        }
+        await prisma.orderItem.updateMany({ where: { orderId: o.id }, data: { quantity: 0 } });
+      }
+    }
+    await prisma.order.updateMany({ where: vanishedWhere, data: { active: false } });
   }
 
   for (const orderData of (orders ?? [])) {
@@ -1180,6 +1190,12 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
         itemFields.transferDate = itemData.transferDate ? new Date(itemData.transferDate) : null;
       }
       if (existingItem) {
+        // Остаток уменьшился — это обеспечено с прошлого синка (только если заказ и раньше был активен:
+        // у вернувшихся из архива заказов прошлый остаток устаревший)
+        if (existing?.active && !factGuard) {
+          await recordSyncFact(existingItem.id, existingItem.quantity - itemData.quantity, todayMs);
+          if (existingItem.quantity > itemData.quantity) stats.factRecords++;
+        }
         await prisma.orderItem.update({ where: { id: existingItem.id }, data: itemFields });
       } else {
         await prisma.orderItem.create({ data: { orderId: order.id, productId: product.id, ...itemFields } });
@@ -1187,10 +1203,25 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
       stats.orderItems++;
     }
 
-    // Удаляем позиции которые BSL больше не присылает (например, стали СоСклада)
-    await prisma.orderItem.deleteMany({
-      where: { orderId: order.id, productId: { notIn: syncedProductIds } },
+    // Позиции, которые BSL больше не присылает: остаток обеспечен (или позицию сняли / стала «Со склада»).
+    // Не удаляем, а обнуляем — иначе вместе с позицией пропали бы её факт и история плана.
+    // Будущий автоматический план по ним убираем; ручные задачи не трогаем.
+    const gone = await prisma.orderItem.findMany({
+      where: { orderId: order.id, productId: { notIn: syncedProductIds }, quantity: { gt: 0 } },
+      select: { id: true, quantity: true },
     });
+    for (const it of gone) {
+      if (existing?.active && !factGuard) {
+        await recordSyncFact(it.id, it.quantity, todayMs);
+        stats.factRecords++;
+      }
+    }
+    if (gone.length > 0) {
+      await prisma.orderItem.updateMany({ where: { id: { in: gone.map(g => g.id) } }, data: { quantity: 0 } });
+      await prisma.dailyTask.deleteMany({
+        where: { orderItemId: { in: gone.map(g => g.id) }, actualQuantity: null, manuallyPlaced: false, date: { gte: new Date(todayMs) } },
+      });
+    }
   }
 
   await prisma.categoryTeam.deleteMany({ where: { category: { companyId } } });
@@ -1272,11 +1303,8 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
     }
   }
 
-  const skippedTotal = factSkipped.noOrder + factSkipped.noProduct + factSkipped.noOrderItem;
-  if (skippedTotal > 0) {
-    console.log(`[sync/1c] fact skipped ${skippedTotal}: noOrder=${factSkipped.noOrder} noProduct=${factSkipped.noProduct} noOrderItem=${factSkipped.noOrderItem}`);
-  }
-  res.json({ ok: true, stats, factSkipped });
+  console.log(`[sync/1c] fact: ${stats.factRecords} записей${factGuard ? ` · ${factGuard}` : ""}`);
+  res.json({ ok: true, stats, ...(factGuard ? { factGuard } : {}) });
 });
 
 // Продакшн: статические файлы фронтенда (до auth, чтобы /index.html не требовал авторизации)
@@ -3369,231 +3397,158 @@ app.post("/orders/:id/auto-plan", async (req: Request, res: Response) => {
 
 // --- Аналитика планирования ---
 
-// Перегрузка: задачи после срока (концепция убрана вместе с dueDate)
-app.get("/planning/overload", async (_req: Request, res: Response) => {
-  res.json({ count: 0, tasks: [] });
-});
+// ─── Загрузка бригад (аналитика) ─────────────────────────────────────────────
+// Загрузка считается так же, как в планировщике: Σ доли бригадо-дня (loadShare или
+// штуки / норма бригады × численность), с учётом корректировок мощности на день.
 
-// Недогрузка: бригады, загруженные менее чем на 100%
-app.get("/planning/underload", async (req: Request, res: Response) => {
-  const cid = req.user!.companyId;
-  const dateFromStr = req.query.dateFrom as string | undefined;
-  const dateToStr = req.query.dateTo as string | undefined;
+function parseRangeQuery(req: Request): { from: Date; to: Date } | null {
+  const from = new Date(String(req.query.dateFrom ?? "") + "T00:00:00.000Z");
+  const to = new Date(String(req.query.dateTo ?? "") + "T00:00:00.000Z");
+  if (isNaN(from.getTime()) || isNaN(to.getTime()) || to < from) return null;
+  return { from, to };
+}
 
-  if (!dateFromStr || !dateToStr) {
-    return res.status(400).json({ error: "dateFrom and dateTo are required (YYYY-MM-DD)" });
+function daysInRange(from: Date, to: Date): { date: string; working: boolean }[] {
+  const out: { date: string; working: boolean }[] = [];
+  for (const d = new Date(from); d <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+    out.push({ date: d.toISOString().slice(0, 10), working: isWorkingDay(new Date(d)) });
   }
+  return out;
+}
 
-  const dateFrom = new Date(dateFromStr);
-  const dateTo = new Date(dateToStr);
-
-  if (isNaN(dateFrom.getTime()) || isNaN(dateTo.getTime())) {
-    return res.status(400).json({ error: "Invalid date format" });
-  }
-
-  // Получаем все задачи в диапазоне дат
+// Задачи бригад за период с долей дня по каждой задаче
+async function teamTasksWithLoad(companyId: string, from: Date, to: Date, teamIds?: string[]) {
   const tasks = await prisma.dailyTask.findMany({
     where: {
-      date: { gte: dateFrom, lte: dateTo },
-      teamId: { not: null },
-      orderItem: { order: { companyId: cid } },
+      date: { gte: from, lte: to },
+      teamId: teamIds ? { in: teamIds } : { not: null },
+      orderItem: { order: { companyId } },
     },
-    include: {
-      team: true,
+    select: {
+      id: true, date: true, teamId: true, plannedQuantity: true, actualQuantity: true, loadShare: true, manuallyPlaced: true,
       orderItem: {
-        include: {
-          product: { include: { category: true } },
+        select: {
+          id: true,
+          order: { select: { orderNumber: true, customer: true } },
+          product: { select: { id: true, code: true, name: true, capacityPerDay: true, category: { select: { capacityPerTeamPerDay: true } } } },
         },
       },
     },
+    orderBy: { date: "asc" },
   });
-
-  // Группируем по бригаде и дате, считаем нагрузку в долях бригадо-дня
-  const teamLoads: Record<
-    string,
-    Record<
-      string,
-      {
-        teamId: string;
-        teamName: string;
-        date: string;
-        planned: number;
-        loadFraction: number;
-        utilization: number;
-      }
-    >
-  > = {};
-
-  for (const task of tasks) {
-    const tid = task.teamId;
-    if (!tid) continue;
-
-    const dateStr = task.date.toISOString().split("T")[0];
-    if (!dateStr) continue;
-    const category = (task.orderItem as { product: { category: { capacityPerTeamPerDay: number } } }).product.category;
-    const cap = category.capacityPerTeamPerDay;
-
-    if (!teamLoads[tid]) {
-      teamLoads[tid] = {};
-    }
-
-    if (!teamLoads[tid][dateStr]) {
-      teamLoads[tid][dateStr] = {
-        teamId: tid,
-        teamName: (task.team as { name: string } | null)?.name || "",
-        date: dateStr,
-        planned: 0,
-        loadFraction: 0,
-        utilization: 0,
-      };
-    }
-
-    teamLoads[tid][dateStr].planned += task.plannedQuantity;
-    teamLoads[tid][dateStr].loadFraction += cap > 0 ? task.plannedQuantity / cap : 0;
-  }
-
-  // Вычисляем utilization и фильтруем недогрузки (< 100%)
-  const underloaded: any[] = [];
-
-  for (const teamId of Object.keys(teamLoads)) {
-    const byDate = teamLoads[teamId];
-    if (!byDate) continue;
-    for (const dateStr of Object.keys(byDate)) {
-      const load = byDate[dateStr];
-      if (!load) continue;
-      load.utilization = load.loadFraction * 100;
-
-      // Недогрузка: загружено менее чем на 100%
-      if (load.utilization < 100) {
-        underloaded.push(load);
-      }
-    }
-  }
-
-  // Сортируем по utilization (по возрастанию - самые недогруженные первыми)
-  underloaded.sort((a, b) => a.utilization - b.utilization);
-
-  res.json({
-    count: underloaded.length,
-    underloaded,
+  const ids = [...new Set(tasks.map(t => t.teamId!))];
+  const productIds = [...new Set(tasks.map(t => t.orderItem.product.id))];
+  const [teams, ptcs] = await Promise.all([
+    prisma.team.findMany({ where: { id: { in: ids } }, select: { id: true, headcount: true } }),
+    productIds.length > 0
+      ? prisma.productTeamCapacity.findMany({ where: { companyId, productId: { in: productIds }, teamId: { in: ids } }, select: { productId: true, teamId: true, capacityPerDay: true } })
+      : Promise.resolve([]),
+  ]);
+  const headcount = new Map(teams.map(t => [t.id, t.headcount]));
+  const ptcMap = new Map(ptcs.map(p => [`${p.productId}|${p.teamId}`, p.capacityPerDay]));
+  return tasks.map(t => {
+    const p = t.orderItem.product;
+    const capPerPerson = ptcMap.get(`${p.id}|${t.teamId}`) ?? p.capacityPerDay ?? p.category.capacityPerTeamPerDay;
+    const cap = capPerPerson * (headcount.get(t.teamId!) ?? 1);
+    return { ...t, date: t.date.toISOString().slice(0, 10), cap, share: taskLoad(t, cap) };
   });
+}
+
+// Матрица «бригада × день»: загрузка в долях дня. Бригады — те, у кого есть нормы или задачи в периоде.
+// Перегрузка (> мощности дня) и недогрузка (рабочий день < 100%) считаются на фронте из этой матрицы.
+app.get("/planning/load-matrix", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const range = parseRangeQuery(req);
+  if (!range) return res.status(400).json({ error: "dateFrom и dateTo обязательны (YYYY-MM-DD)" });
+  if ((range.to.getTime() - range.from.getTime()) / 86400000 > 92) return res.status(400).json({ error: "Период не больше 3 месяцев" });
+
+  const [tasks, teams, dayCaps] = await Promise.all([
+    teamTasksWithLoad(cid, range.from, range.to),
+    prisma.team.findMany({
+      where: { companyId: cid },
+      select: { id: true, name: true, headcount: true, _count: { select: { productCapacities: { where: { capacityPerDay: { gt: 0 } } } } } },
+    }),
+    prisma.teamDayCapacity.findMany({ where: { team: { companyId: cid }, date: { gte: range.from, lte: range.to } } }),
+  ]);
+  const days = daysInRange(range.from, range.to);
+  const factor = new Map(dayCaps.map(c => [`${c.teamId}|${c.date.toISOString().slice(0, 10)}`, c.factor]));
+  const cells = new Map<string, { load: number; planned: number; actual: number; tasks: number }>();
+  for (const t of tasks) {
+    const key = `${t.teamId}|${t.date}`;
+    const c = cells.get(key) ?? { load: 0, planned: 0, actual: 0, tasks: 0 };
+    c.load += t.share; c.planned += t.plannedQuantity; c.actual += t.actualQuantity ?? 0; c.tasks += t.plannedQuantity > 0 ? 1 : 0;
+    cells.set(key, c);
+  }
+  const withTasks = new Set(tasks.map(t => t.teamId));
+
+  const result = teams
+    .filter(t => t._count.productCapacities > 0 || withTasks.has(t.id))
+    .map(t => {
+      const byDay = days.map(d => {
+        const c = cells.get(`${t.id}|${d.date}`);
+        return {
+          date: d.date,
+          load: Math.round((c?.load ?? 0) * 1000) / 1000,
+          capacity: d.working ? (factor.get(`${t.id}|${d.date}`) ?? 1) : 0,
+          planned: c?.planned ?? 0,
+          actual: c?.actual ?? 0,
+          tasks: c?.tasks ?? 0,
+        };
+      });
+      const working = byDay.filter(d => d.capacity > 0);
+      const avg = working.length ? working.reduce((s, d) => s + d.load / d.capacity, 0) / working.length : 0;
+      return { teamId: t.id, teamName: t.name, headcount: t.headcount, avgLoad: Math.round(avg * 1000) / 1000, days: byDay };
+    })
+    .sort((a, b) => a.teamName.localeCompare(b.teamName, "ru", { numeric: true }));
+
+  res.json({ days, teams: result });
 });
 
-// Загрузка бригады по датам
+// Загрузка одной бригады: позиции × дни (штуки и доля дня) + итог по дню
 app.get("/planning/team-load", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const teamId = req.query.teamId as string | undefined;
-  const dateFromStr = req.query.dateFrom as string | undefined;
-  const dateToStr = req.query.dateTo as string | undefined;
+  const range = parseRangeQuery(req);
+  if (!teamId) return res.status(400).json({ error: "teamId is required" });
+  if (!range) return res.status(400).json({ error: "dateFrom и dateTo обязательны (YYYY-MM-DD)" });
 
-  if (!teamId) {
-    return res.status(400).json({ error: "teamId is required" });
-  }
+  const team = await prisma.team.findFirst({ where: { id: teamId, companyId: cid }, select: { id: true, name: true, headcount: true } });
+  if (!team) return res.status(404).json({ error: "Team not found" });
 
-  if (!dateFromStr || !dateToStr) {
-    return res.status(400).json({ error: "dateFrom and dateTo are required (YYYY-MM-DD)" });
-  }
-
-  const dateFrom = new Date(dateFromStr);
-  const dateTo = new Date(dateToStr);
-
-  if (isNaN(dateFrom.getTime()) || isNaN(dateTo.getTime())) {
-    return res.status(400).json({ error: "Invalid date format" });
-  }
-
-  const teamOwned = await prisma.team.findFirst({ where: { id: teamId, companyId: cid } });
-  if (!teamOwned) return res.status(404).json({ error: "Team not found" });
-
-  // Получаем задачи бригады
-  const tasks = await prisma.dailyTask.findMany({
-    where: {
-      teamId,
-      date: { gte: dateFrom, lte: dateTo },
-      orderItem: { order: { companyId: cid } },
-    },
-    include: {
-      orderItem: {
-        include: {
-          product: { include: { category: true } },
-        },
-      },
-    },
+  const [tasks, dayCaps] = await Promise.all([
+    teamTasksWithLoad(cid, range.from, range.to, [teamId]),
+    prisma.teamDayCapacity.findMany({ where: { teamId, date: { gte: range.from, lte: range.to } } }),
+  ]);
+  const factor = new Map(dayCaps.map(c => [c.date.toISOString().slice(0, 10), c.factor]));
+  const days = daysInRange(range.from, range.to).map(d => {
+    const dayTasks = tasks.filter(t => t.date === d.date);
+    return {
+      date: d.date,
+      capacity: d.working ? (factor.get(d.date) ?? 1) : 0,
+      load: Math.round(dayTasks.reduce((s, t) => s + t.share, 0) * 1000) / 1000,
+    };
   });
 
-  // Группируем по дате и категории
-  const loadsByDate: Record<
-    string,
-    {
-      date: string;
-      totalLoadFraction: number;
-      categories: Record<
-        string,
-        {
-          categoryId: string;
-          categoryName: string;
-          capacity: number;
-          planned: number;
-          utilization: number;
-        }
-      >;
-    }
-  > = {};
-
-  for (const task of tasks) {
-    const dateStr = task.date.toISOString().split("T")[0];
-    if (!dateStr) continue;
-    const orderItem = task.orderItem as { product: { category: { id: string; name: string; capacityPerTeamPerDay: number } } };
-    const category = orderItem.product.category;
-
-    if (!loadsByDate[dateStr]) {
-      loadsByDate[dateStr] = {
-        date: dateStr,
-        totalLoadFraction: 0,
-        categories: {},
-      };
-    }
-
-    const dayLoad = loadsByDate[dateStr]!;
-    if (!dayLoad.categories[category.id]) {
-      dayLoad.categories[category.id] = {
-        categoryId: category.id,
-        categoryName: category.name,
-        capacity: category.capacityPerTeamPerDay,
-        planned: 0,
-        utilization: 0,
-      };
-    }
-
-    const catEntry = dayLoad.categories[category.id];
-    if (catEntry) {
-      catEntry.planned += task.plannedQuantity;
-    }
-    dayLoad.totalLoadFraction += category.capacityPerTeamPerDay > 0
-      ? task.plannedQuantity / category.capacityPerTeamPerDay
-      : 0;
+  const rows = new Map<string, { orderItemId: string; orderNumber: string; customer: string; productCode: string; productName: string; capPerDay: number; cells: Record<string, { planned: number; actual: number | null; share: number; manual: boolean }> }>();
+  for (const t of tasks) {
+    if (t.plannedQuantity <= 0 && !t.actualQuantity) continue;
+    const r = rows.get(t.orderItem.id) ?? {
+      orderItemId: t.orderItem.id,
+      orderNumber: t.orderItem.order.orderNumber,
+      customer: t.orderItem.order.customer,
+      productCode: t.orderItem.product.code,
+      productName: t.orderItem.product.name,
+      capPerDay: Math.round(t.cap * 10) / 10,
+      cells: {},
+    };
+    r.cells[t.date] = { planned: t.plannedQuantity, actual: t.actualQuantity, share: Math.round(t.share * 1000) / 1000, manual: t.manuallyPlaced };
+    rows.set(t.orderItem.id, r);
   }
+  // Позиции в порядке, в котором бригада их делает
+  const list = [...rows.values()].sort((a, b) =>
+    (Object.keys(a.cells).sort()[0] ?? "").localeCompare(Object.keys(b.cells).sort()[0] ?? ""));
 
-  // Вычисляем utilization по каждой категории
-  for (const dateStr of Object.keys(loadsByDate)) {
-    const dayLoad = loadsByDate[dateStr];
-    if (!dayLoad) continue;
-    for (const categoryId of Object.keys(dayLoad.categories)) {
-      const cat = dayLoad.categories[categoryId];
-      if (cat) cat.utilization = (cat.planned / cat.capacity) * 100;
-    }
-  }
-
-  const team = await prisma.team.findUnique({
-    where: { id: teamId },
-  });
-
-  res.json({
-    teamId,
-    teamName: team?.name || "",
-    dateFrom: dateFromStr,
-    dateTo: dateToStr,
-    loads: Object.values(loadsByDate),
-  });
+  res.json({ teamId, teamName: team.name, headcount: team.headcount, days, rows: list });
 });
 
 // Аналитика по заказам: что успевается к сроку, что нет (dueDate удалён)
