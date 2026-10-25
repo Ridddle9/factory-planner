@@ -173,6 +173,7 @@ model OrderItem {
   productId   String
   quantity    Int
   groupNumber Int?
+  transferDate DateTime? // Дата передачи строки (рткДатаПередачи, МАКСИМУМ по строкам товара) — ключ очереди; null — берётся дата заказа, без неё — сегодня
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)

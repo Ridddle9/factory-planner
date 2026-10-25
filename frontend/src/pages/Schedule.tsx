@@ -44,6 +44,7 @@ type CellData = {
   plannedQuantity: number
   actualQuantity: number | null
   comment: string | null
+  manual: boolean
 }
 
 type RowData = {
@@ -320,6 +321,7 @@ export default function Schedule() {
         plannedQuantity: task.plannedQuantity,
         actualQuantity: task.actualQuantity,
         comment: task.comment,
+        manual: task.manuallyPlaced ?? false,
       }
     }
     return Array.from(map.values())
@@ -444,12 +446,16 @@ export default function Schedule() {
     if (popup.cell) {
       const prevQty = popup.cell.plannedQuantity
       const prevTeamId = popup.cell.teamId
+      const prevManual = popup.cell.manual
       const taskId = popup.cell.taskId
-      await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: editQty, teamId: editTeamId || null })
-      setUndoAction({
-        label: `Вернуть ${prevQty} шт.`,
-        fn: async () => { await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: prevQty, teamId: prevTeamId }) },
-      })
+      // Без изменений — не сохраняем, иначе задача зря станет ручной
+      if (editQty !== prevQty || (editTeamId || null) !== prevTeamId) {
+        await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: editQty, teamId: editTeamId || null })
+        setUndoAction({
+          label: `Вернуть ${prevQty} шт.`,
+          fn: async () => { await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: prevQty, teamId: prevTeamId, manuallyPlaced: prevManual }) },
+        })
+      }
     } else {
       const oi = allOrderItems.find(o => o.id === popup.rowId)
       const defQty = oi?.remainingQuantity ?? editQty
@@ -487,6 +493,18 @@ export default function Schedule() {
         })
       },
     })
+    closePopup()
+    loadPlan()
+  }
+
+  // Снять закрепление: задача снова в руках автопланирования («Перепланировать очередь» её пересоберёт)
+  const handleUnpin = async () => {
+    if (!popup?.cell) return
+    const taskId = popup.cell.taskId
+    setSaving(true)
+    await api.put(`/daily-tasks/${taskId}`, { manuallyPlaced: false })
+    setUndoAction({ label: 'Закрепить обратно', fn: async () => { await api.put(`/daily-tasks/${taskId}`, { manuallyPlaced: true }) } })
+    setSaving(false)
     closePopup()
     loadPlan()
   }
@@ -539,7 +557,7 @@ export default function Schedule() {
     setMoveWarning(null)
     setUndoAction({
       label: `Вернуть на ${fromDate}`,
-      fn: async () => { await api.put(`/daily-tasks/${taskId}`, { date: new Date(fromDate).toISOString() }) },
+      fn: async () => { await api.put(`/daily-tasks/${taskId}`, { date: new Date(fromDate).toISOString(), manuallyPlaced: source?.cell?.manual ?? false }) },
     })
     loadPlan()
   }
@@ -887,7 +905,7 @@ export default function Schedule() {
                                 <span>{row.productName || row.productCode}</span>
                               </span>
                               <span className="day-task-qty">
-                                <strong>{cell.plannedQuantity}</strong>
+                                <strong>{cell.manual && <span className="pin-mark" title="Ручная правка">📌</span>}{cell.plannedQuantity}</strong>
                                 {cell.actualQuantity !== null && <span>✓{cell.actualQuantity}</span>}
                               </span>
                             </button>
@@ -1028,12 +1046,12 @@ export default function Schedule() {
                                 outlineOffset: -2,
                               }}
                               title={cell
-                                ? `План: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, Факт: ${cell.actualQuantity}` : ''}${cell.comment ? `\n${cell.comment}` : ''}`
+                                ? `План: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, Факт: ${cell.actualQuantity}` : ''}${cell.manual ? '\nРучная правка — перепланирование не трогает' : ''}${cell.comment ? `\n${cell.comment}` : ''}`
                                 : isValidTarget ? 'Кликните, чтобы перенести сюда' : undefined}
                             >
                               {cell && cell.plannedQuantity > 0 && (
                                 <>
-                                  <div style={{ fontWeight: 600, lineHeight: 1.2 }}>{cell.plannedQuantity}</div>
+                                  <div style={{ fontWeight: 600, lineHeight: 1.2 }}>{cell.manual && <span className="pin-mark">📌</span>}{cell.plannedQuantity}</div>
                                   {cell.actualQuantity !== null && (
                                     <div style={{ fontSize: '0.68rem', color: '#374151', lineHeight: 1 }}>✓{cell.actualQuantity}</div>
                                   )}
@@ -1176,6 +1194,12 @@ export default function Schedule() {
                       Разбить ÷
                     </button>
                   </div>
+                  {popup.cell.manual && (
+                    <div className="pin-note">
+                      <span>📌 Ручная правка — перепланирование её не трогает</span>
+                      <button type="button" className="btn btn-secondary" onClick={handleUnpin} disabled={saving}>Снять закрепление</button>
+                    </div>
+                  )}
                   <button className="btn btn-danger" style={{ width: '100%' }} onClick={handleDelete} disabled={saving}>
                     Удалить
                   </button>

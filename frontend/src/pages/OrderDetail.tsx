@@ -3,6 +3,11 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import type { Order, OrderItem, Product } from '../types'
 
+// Дата передачи строки (или заказа, пока 1С не шлёт её по строкам) в виде ДД.ММ.ГГГГ
+function formatTransferDate(iso: string | null | undefined) {
+  return iso ? new Date(iso).toLocaleDateString('ru-RU', { timeZone: 'UTC' }) : '—'
+}
+
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>()
   const [order, setOrder] = useState<Order | null>(null)
@@ -257,6 +262,7 @@ export default function OrderDetail() {
                 <th>Код</th>
                 <th>Количество</th>
                 <th>К обеспечению</th>
+                <th title="Дата передачи в производство из 1С — по ней строится очередь планирования">Дата передачи</th>
                 <th style={{ width: 220 }}></th>
               </tr>
             </thead>
@@ -267,6 +273,7 @@ export default function OrderDetail() {
                   <td data-label="Код">{item.product?.code ?? '—'}</td>
                   <td data-label="Количество">{item.quantity}</td>
                   <td data-label="К обеспечению">{item.remainingQuantity !== undefined ? item.remainingQuantity : '—'}</td>
+                  <td data-label="Дата передачи">{formatTransferDate(item.transferDate ?? item.order?.raytecDate)}</td>
                   <td className="stack-actions">
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => autoPlanItem(item.id)} disabled={autoPlanning}>Автоплан</button>
                     {' '}

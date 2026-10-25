@@ -365,6 +365,15 @@ async function getAvailableTeamsForCategory(categoryId: string, companyId: strin
 }
 
 
+// Ключ очереди планирования — Дата передачи, как у Raytec: своя у строки (из 1С), иначе дата заказа;
+// без даты — сегодня (Raytec подставляет ТекущаяДата), а не начало очереди
+function queueDateMs(item: { transferDate?: Date | null; order: { raytecDate: Date | null } }): number {
+  const d = item.transferDate ?? item.order.raytecDate;
+  if (d) return d.getTime();
+  const today = new Date();
+  return Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+}
+
 // Helper: выбрать бригаду с минимальной загрузкой на дату (нагрузка в долях)
 async function selectTeamWithMinLoad(
   teamIds: string[],
@@ -387,40 +396,113 @@ async function selectTeamWithMinLoad(
   return loads[0]?.teamId || null;
 }
 
+// Helper: выбрать бригаду как у Raytec — позиция целиком идёт на бригаду, которая раньше освободится.
+// «Освободится» = первый рабочий день от даты старта, где у бригады есть свободное время
+// (с учётом корректировок мощности, блокировок категории и уже стоящих задач, в т.ч. ручных).
+// В один день раньше свободна та, у кого в этот день меньше занято. Ничья — у кого выше мощность
+// по товару (сделает быстрее), затем по названию.
+async function selectEarliestFreeTeam(
+  teamIds: string[],
+  product: { id: string; categoryId: string },
+  companyId: string,
+  fallbackCapPerPerson: number | null,
+  startDate: Date,
+  skipDateMs: Set<number>
+): Promise<string | null> {
+  if (teamIds.length <= 1) return teamIds[0] ?? null;
+
+  const [teams, tasks, dayCaps, blocks, ownPtcs] = await Promise.all([
+    prisma.team.findMany({ where: { id: { in: teamIds } }, select: { id: true, name: true, headcount: true } }),
+    prisma.dailyTask.findMany({
+      where: { teamId: { in: teamIds }, date: { gte: startDate } },
+      select: {
+        teamId: true, date: true, plannedQuantity: true, loadShare: true,
+        orderItem: { select: { product: { select: { id: true, capacityPerDay: true, category: { select: { capacityPerTeamPerDay: true } } } } } },
+      },
+    }),
+    prisma.teamDayCapacity.findMany({ where: { teamId: { in: teamIds }, date: { gte: startDate } } }),
+    prisma.categoryBlock.findMany({ where: { categoryId: product.categoryId, companyId }, select: { startDate: true, endDate: true } }),
+    prisma.productTeamCapacity.findMany({ where: { productId: product.id, teamId: { in: teamIds }, companyId }, select: { teamId: true, capacityPerDay: true } }),
+  ]);
+
+  const taskProductIds = [...new Set(tasks.map(t => t.orderItem.product.id))];
+  const ptcs = taskProductIds.length > 0
+    ? await prisma.productTeamCapacity.findMany({
+        where: { productId: { in: taskProductIds }, teamId: { in: teamIds }, companyId },
+        select: { productId: true, teamId: true, capacityPerDay: true },
+      })
+    : [];
+  const ptcMap = new Map(ptcs.map(p => [`${p.productId}|${p.teamId}`, p.capacityPerDay]));
+  const headcount = new Map(teams.map(t => [t.id, t.headcount]));
+
+  // Загрузка (доли бригадо-дня) по бригаде и дню — та же формула, что в calculateTeamLoad
+  const load = new Map<string, number>();
+  for (const t of tasks) {
+    const p = t.orderItem.product;
+    const capPerPerson = ptcMap.get(`${p.id}|${t.teamId}`) ?? p.capacityPerDay ?? p.category.capacityPerTeamPerDay;
+    const key = `${t.teamId}|${t.date.getTime()}`;
+    load.set(key, (load.get(key) ?? 0) + taskLoad(t, capPerPerson * (headcount.get(t.teamId!) ?? 1)));
+  }
+  const factor = new Map(dayCaps.map(c => [`${c.teamId}|${c.date.getTime()}`, c.factor]));
+
+  const ownCap = new Map(ownPtcs.map(p => [p.teamId, p.capacityPerDay]));
+  const candidates: { teamId: string; name: string; day: number; used: number; cap: number }[] = [];
+
+  for (const team of teams) {
+    const cur = new Date(startDate);
+    for (let day = 0; day < 730; day++, cur.setDate(cur.getDate() + 1)) {
+      const date = new Date(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`);
+      const ms = date.getTime();
+      if (skipDateMs.has(ms) || !isWorkingDay(date)) continue;
+      if (blocks.some(b => b.startDate <= date && b.endDate >= date)) continue;
+      const used = load.get(`${team.id}|${ms}`) ?? 0;
+      if ((factor.get(`${team.id}|${ms}`) ?? 1) - used > 1e-6) {
+        const cap = (ownCap.get(team.id) ?? fallbackCapPerPerson ?? 0) * team.headcount;
+        candidates.push({ teamId: team.id, name: team.name, day, used, cap });
+        break;
+      }
+    }
+  }
+
+  candidates.sort((a, b) =>
+    a.day - b.day || a.used - b.used || b.cap - a.cap || a.name.localeCompare(b.name, "ru", { numeric: true }));
+  return candidates[0]?.teamId ?? teamIds[0] ?? null;
+}
+
+// Ручные задачи позиции с даты from: их не трогает никакое автопланирование.
+// Остаток позиции планируется вокруг них (reservedQty / skipDates) и на ту же бригаду.
+async function manualPlanOf(orderItemId: string, from: Date) {
+  const tasks = await prisma.dailyTask.findMany({
+    where: { orderItemId, manuallyPlaced: true, actualQuantity: null, date: { gte: from } },
+    select: { date: true, plannedQuantity: true },
+  });
+  return { reservedQty: tasks.reduce((s, t) => s + t.plannedQuantity, 0), skipDates: tasks.map(t => t.date) };
+}
+
+// Сколько штук позиции уже стоит в плане с даты from (без факта) — чтобы «Запланировать»
+// дописывало только недостающее, а не дублировало план
+async function plannedAheadQty(orderItemId: string, from: Date): Promise<number> {
+  const agg = await prisma.dailyTask.aggregate({
+    where: { orderItemId, actualQuantity: null, date: { gte: from } },
+    _sum: { plannedQuantity: true },
+  });
+  return agg._sum.plannedQuantity ?? 0;
+}
+
 // Helper: сжать план позиции заказа влево (после ручного переноса на позднюю дату)
-async function compactOrderItem(orderItemId: string, preserveDate?: Date): Promise<void> {
+async function compactOrderItem(orderItemId: string): Promise<void> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // If the user manually placed a task on preserveDate, keep it untouched
-  let preservedQty = 0;
-  if (preserveDate) {
-    const preserved = await prisma.dailyTask.findUnique({
-      where: { orderItemId_date: { orderItemId, date: preserveDate } },
-      select: { plannedQuantity: true },
-    });
-    preservedQty = preserved?.plannedQuantity ?? 0;
-
-    await prisma.dailyTask.deleteMany({
-      where: {
-        orderItemId,
-        date: { gte: today, not: preserveDate },
-        actualQuantity: null,
-      },
-    });
-  } else {
-    await prisma.dailyTask.deleteMany({
-      where: { orderItemId, date: { gte: today }, actualQuantity: null },
-    });
-  }
+  // Ручные задачи (в т.ч. только что перенесённая) остаются как есть,
+  // пересобираем только автоматический план позиции
+  await prisma.dailyTask.deleteMany({
+    where: { orderItemId, date: { gte: today }, actualQuantity: null, manuallyPlaced: false },
+  });
+  const manual = await manualPlanOf(orderItemId, today);
 
   try {
-    const planOpts: { startDate: Date; skipDates?: Date[]; reservedQty?: number } = {
-      startDate: today,
-      reservedQty: preservedQty,
-    };
-    if (preserveDate) planOpts.skipDates = [preserveDate];
-    await autoPlanOrderItem(orderItemId, planOpts);
+    await autoPlanOrderItem(orderItemId, { startDate: today, ...manual });
   } catch {
     // нет бригады / категории — оставляем незапланированным
   }
@@ -469,8 +551,8 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
       const pa = a.orderItem.order.priority ?? 20;
       const pb = b.orderItem.order.priority ?? 20;
       if (pa !== pb) return pb - pa;
-      const ra = a.orderItem.order.raytecDate?.getTime() ?? 0;
-      const rb = b.orderItem.order.raytecDate?.getTime() ?? 0;
+      const ra = queueDateMs(a.orderItem);
+      const rb = queueDateMs(b.orderItem);
       if (ra !== rb) return rb - ra;
       const ta = a.orderItem.order.approvedAt?.getTime() ?? 0;
       const tb = b.orderItem.order.approvedAt?.getTime() ?? 0;
@@ -586,8 +668,8 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
       const pa = a.orderItem.order.priority ?? 20;
       const pb = b.orderItem.order.priority ?? 20;
       if (pa !== pb) return pa - pb;
-      const ra = a.orderItem.order.raytecDate?.getTime() ?? 0;
-      const rb = b.orderItem.order.raytecDate?.getTime() ?? 0;
+      const ra = queueDateMs(a.orderItem);
+      const rb = queueDateMs(b.orderItem);
       if (ra !== rb) return ra - rb;
       const ta = a.orderItem.order.approvedAt?.getTime() ?? 0;
       const tb = b.orderItem.order.approvedAt?.getTime() ?? 0;
@@ -697,6 +779,33 @@ async function autoPlanOrderItem(
   }
 
   const skipDateMs = new Set((options?.skipDates ?? []).map(d => d.getTime()));
+  // Дни, где у позиции стоит ручная задача, не трогаем — ни дописываем, ни меняем бригаду
+  const manualTasks = await prisma.dailyTask.findMany({
+    where: { orderItemId, manuallyPlaced: true },
+    select: { date: true, teamId: true },
+    orderBy: { date: "desc" },
+  });
+  for (const t of manualTasks) skipDateMs.add(t.date.getTime());
+
+  // Бригада выбирается один раз на всю позицию (как у Raytec):
+  // 1) явно указанная; 2) бригада ручной задачи или уже начатой работы (есть факт) по позиции;
+  // 3) та, что раньше освободится
+  let teamId: string | null = null;
+  if (options?.preferredTeamId && capableTeamIds.includes(options.preferredTeamId)) {
+    teamId = options.preferredTeamId;
+  } else {
+    const started = await prisma.dailyTask.findFirst({
+      where: { orderItemId, teamId: { in: capableTeamIds }, actualQuantity: { gt: 0 } },
+      select: { teamId: true },
+      orderBy: { date: "desc" },
+    });
+    teamId = manualTasks.find(t => t.teamId && capableTeamIds.includes(t.teamId))?.teamId
+      ?? started?.teamId
+      ?? await selectEarliestFreeTeam(capableTeamIds, orderItem.product, orderItem.order.companyId, fallbackCapPerPerson, currentDate, skipDateMs);
+  }
+  if (!teamId) {
+    throw new Error("No available team found");
+  }
 
   const tasks: any[] = [];
   let remaining = Math.max(0, quantity - (options?.reservedQty ?? 0));
@@ -744,19 +853,6 @@ async function autoPlanOrderItem(
       currentDate.setDate(currentDate.getDate() + 1);
       daysPlanned++;
       continue;
-    }
-
-    // Выбираем бригаду
-    let teamId: string | null = null;
-
-    if (options?.preferredTeamId && capableTeamIds.includes(options.preferredTeamId)) {
-      teamId = options.preferredTeamId;
-    } else {
-      teamId = await selectTeamWithMinLoad(capableTeamIds, date);
-    }
-
-    if (!teamId) {
-      throw new Error("No available team found");
     }
 
     // Проверяем текущую загрузку бригады (в долях бригадо-дня)
@@ -892,7 +988,7 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
   const companyId = syncCompany.id;
 
   const { orders, categories, teams, teamCategories, fact, capacity } = req.body as {
-    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number }[] }[];
+    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number; transferDate?: string }[] }[];
     categories: { code: string; name: string; capacity?: number }[];
     teams: { code: string; name: string; workshopName?: string; headcount?: number }[];
     teamCategories: { categoryName: string; teamName: string; workshopName?: string }[];
@@ -1078,10 +1174,15 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
       const existingItem = await prisma.orderItem.findFirst({
         where: { orderId: order.id, productId: product.id },
       });
+      // Дата передачи строки: старая версия BSL её не шлёт (undefined) — не трогаем; пустая строка — null
+      const itemFields: { quantity: number; transferDate?: Date | null } = { quantity: itemData.quantity };
+      if (itemData.transferDate !== undefined) {
+        itemFields.transferDate = itemData.transferDate ? new Date(itemData.transferDate) : null;
+      }
       if (existingItem) {
-        await prisma.orderItem.update({ where: { id: existingItem.id }, data: { quantity: itemData.quantity } });
+        await prisma.orderItem.update({ where: { id: existingItem.id }, data: itemFields });
       } else {
-        await prisma.orderItem.create({ data: { orderId: order.id, productId: product.id, quantity: itemData.quantity } });
+        await prisma.orderItem.create({ data: { orderId: order.id, productId: product.id, ...itemFields } });
       }
       stats.orderItems++;
     }
@@ -1328,12 +1429,12 @@ app.post("/order-items/plan-unplanned", async (req: Request, res: Response) => {
       product: { category: { visible: true, workshop: { visible: true } } },
     },
     include: { dailyTasks: true, order: { select: { approvedAt: true, priority: true, raytecDate: true } } },
-    orderBy: [
-      { order: { priority: "asc" } },
-      { order: { raytecDate: "asc" } },
-      { order: { approvedAt: "asc" } },
-    ],
   });
+  // Очередь: приоритет → Дата передачи строки → дата согласования
+  items.sort((a, b) =>
+    a.order.priority - b.order.priority ||
+    queueDateMs(a) - queueDateMs(b) ||
+    (a.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (b.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
 
   const unplanned = items.filter((item) => {
     // Как у Raytec: "выполнено" — только то, что было явно запланировано и подтверждено.
@@ -1356,7 +1457,7 @@ app.post("/order-items/plan-unplanned", async (req: Request, res: Response) => {
 
   for (const item of unplanned) {
     try {
-      const { tasks } = await autoPlanOrderItem(item.id);
+      const { tasks } = await autoPlanOrderItem(item.id, { reservedQty: await plannedAheadQty(item.id, today) });
       if (tasks.length > 0) planned++;
       else skipped++;
     } catch (err: any) {
@@ -2364,15 +2465,18 @@ app.post("/daily-tasks", async (req: Request, res: Response) => {
   }
 
   try {
+    // Задача, добавленная вручную, — ручная правка: автопланирование её не трогает
     const createData: {
       orderItem: { connect: { id: string } };
       date: Date;
       plannedQuantity: number;
+      manuallyPlaced: boolean;
       team?: { connect: { id: string } };
     } = {
       orderItem: { connect: { id: orderItemId } },
       date: taskDate,
       plannedQuantity: plannedQuantity !== undefined ? plannedQuantity : 0,
+      manuallyPlaced: true,
     };
     if (teamId && typeof teamId === "string") {
       createData.team = { connect: { id: teamId } };
@@ -2402,7 +2506,7 @@ app.post("/daily-tasks", async (req: Request, res: Response) => {
 app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
   const id = req.params.id;
   if (typeof id !== "string") return res.status(400).json({ error: "Invalid id" });
-  const { plannedQuantity, teamId, date } = req.body;
+  const { plannedQuantity, teamId, date, manuallyPlaced } = req.body;
 
   const data: {
     plannedQuantity?: number;
@@ -2438,14 +2542,25 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid date format" });
     }
     data.date = taskDate;
-    data.manuallyPlaced = true;
   }
 
   try {
-    // Read old state before update (needed for date-change logic)
-    const oldTask = date !== undefined
-      ? await prisma.dailyTask.findUnique({ where: { id }, select: { date: true, teamId: true, orderItemId: true } })
-      : null;
+    const current = await prisma.dailyTask.findUnique({
+      where: { id },
+      select: { date: true, teamId: true, orderItemId: true, plannedQuantity: true },
+    });
+    if (!current) return res.status(404).json({ error: "Daily task not found" });
+    // Старое состояние нужно для логики переноса даты
+    const oldTask = date !== undefined ? current : null;
+
+    // Реальная правка количества, бригады или даты — ручная: перепланирование её больше не трогает.
+    // Снять закрепление — явный manuallyPlaced: false (задача снова отдаётся автопланированию)
+    const changed =
+      (data.plannedQuantity !== undefined && data.plannedQuantity !== current.plannedQuantity) ||
+      (data.teamId !== undefined && data.teamId !== current.teamId) ||
+      (data.date !== undefined && data.date.getTime() !== current.date.getTime());
+    if (changed) data.manuallyPlaced = true;
+    if (typeof manuallyPlaced === "boolean") data.manuallyPlaced = manuallyPlaced;
 
     const task = await prisma.dailyTask.update({
       where: { id },
@@ -2473,7 +2588,7 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
         const freedTeamId = oldTask.teamId;
         const freedDate = oldDate;
         setImmediate(async () => {
-          await compactOrderItem(oldTask.orderItemId, newDate);
+          await compactOrderItem(oldTask.orderItemId);
           if (freedTeamId) await cascadeShiftLeft(freedTeamId, freedDate);
         });
       } else if (newMs < oldMs) {
@@ -2550,9 +2665,10 @@ app.post("/daily-tasks/:id/split", async (req: Request, res: Response) => {
     }
 
     // Обновляем первую задачу
+    // Обе части — ручные правки
     const task1 = await prisma.dailyTask.update({
       where: { id },
-      data: { plannedQuantity: qty1 },
+      data: { plannedQuantity: qty1, manuallyPlaced: true },
       include: { orderItem: { include: { order: true, product: { include: { category: { include: { workshop: true } } } } } }, team: true },
     });
 
@@ -2563,6 +2679,7 @@ app.post("/daily-tasks/:id/split", async (req: Request, res: Response) => {
         teamId: original.teamId,
         date: targetDate,
         plannedQuantity: qty2,
+        manuallyPlaced: true,
       },
       include: { orderItem: { include: { order: true, product: { include: { category: { include: { workshop: true } } } } } }, team: true },
     });
@@ -2814,13 +2931,16 @@ app.post("/teams/:teamId/rebalance-day", async (req: Request, res: Response) => 
 
   if (excess <= 0) return res.json({ moved: 0, tasks: [] });
 
+  // Ручные задачи и задачи с фактом не переносим
+  const movable = tasks.filter(t => !t.manuallyPlaced && t.actualQuantity === null);
+
   // Следующий рабочий день (просто +1 день)
   const nextDay = new Date(dayDate);
   nextDay.setDate(nextDay.getDate() + 1);
 
   const moved: { orderItemId: string; qty: number }[] = [];
 
-  for (const task of tasks) {
+  for (const task of movable) {
     if (excess <= 0) break;
     const trim = Math.min(task.plannedQuantity, excess);
     const newQty = task.plannedQuantity - trim;
@@ -2953,7 +3073,8 @@ app.post("/daily-tasks/assign-team", async (req: Request, res: Response) => {
   }
 
   try {
-    const updateData = teamId === null || teamId === "" ? { teamId: null } : { team: { connect: { id: teamId } } };
+    // Назначение бригады вручную — ручная правка
+    const updateData = { teamId: teamId === null || teamId === "" ? null : teamId, manuallyPlaced: true };
 
     const tasks = await prisma.dailyTask.updateMany({
       where: {
@@ -3135,7 +3256,7 @@ app.post("/order-items/:id/auto-plan", async (req: Request, res: Response) => {
   const { startDate, preferredTeamId } = req.body;
 
   try {
-    const options: { startDate?: Date; preferredTeamId?: string } = {};
+    const options: { startDate?: Date; preferredTeamId?: string; reservedQty?: number } = {};
 
     if (startDate) {
       const date = new Date(startDate);
@@ -3149,6 +3270,9 @@ app.post("/order-items/:id/auto-plan", async (req: Request, res: Response) => {
       options.preferredTeamId = preferredTeamId;
     }
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    options.reservedQty = await plannedAheadQty(id, today);
     const result = await autoPlanOrderItem(id, options);
 
     res.json({
@@ -3201,11 +3325,14 @@ app.post("/orders/:id/auto-plan", async (req: Request, res: Response) => {
       options.preferredTeamId = preferredTeamId;
     }
 
-    const results = await Promise.all(
-      orderItems.map(async (item) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const results = [];
+    for (const item of orderItems) {
+      results.push(await (async () => {
         const product = (item as { product: { code: string } }).product;
         try {
-          const result = await autoPlanOrderItem(item.id, options);
+          const result = await autoPlanOrderItem(item.id, { ...options, reservedQty: await plannedAheadQty(item.id, today) });
           return {
             orderItemId: item.id,
             productCode: product.code,
@@ -3221,8 +3348,8 @@ app.post("/orders/:id/auto-plan", async (req: Request, res: Response) => {
             error: err.message,
           };
         }
-      })
-    );
+      })());
+    }
 
     const successful = results.filter((r) => r.success).length;
     const overloaded = results.filter((r) => r.success && r.overloaded).length;
@@ -3539,20 +3666,20 @@ app.post("/orders/:id/replan", async (req: Request, res: Response) => {
       items: Array<{ id: string; product: { code: string }; dailyTasks: unknown[] }>;
     };
 
-    // Удаляем все старые задачи заказа
-    for (const item of orderWithItems.items) {
-      if (item.dailyTasks.length > 0) {
-        await prisma.dailyTask.deleteMany({
-          where: { orderItemId: item.id },
-        });
-      }
-    }
+    // Удаляем будущие автоматические задачи заказа; факт и ручные правки остаются
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    await prisma.dailyTask.deleteMany({
+      where: { orderItemId: { in: orderWithItems.items.map(i => i.id) }, actualQuantity: null, manuallyPlaced: false, date: { gte: today } },
+    });
 
-    // Перепланируем все позиции
-    const results = await Promise.all(
-      orderWithItems.items.map(async (item) => {
+    // Перепланируем позиции по очереди (параллельно они видели бы устаревшую загрузку бригад)
+    const results = [];
+    for (const item of orderWithItems.items) {
+      results.push(await (async () => {
         try {
-          const result = await autoPlanOrderItem(item.id, force ? {} : { startDate: new Date() });
+          const manual = await manualPlanOf(item.id, today);
+          const result = await autoPlanOrderItem(item.id, force ? manual : { startDate: new Date(), ...manual });
           return {
             orderItemId: item.id,
             productCode: item.product.code,
@@ -3568,8 +3695,8 @@ app.post("/orders/:id/replan", async (req: Request, res: Response) => {
             error: err.message,
           };
         }
-      })
-    );
+      })());
+    }
 
     const successful = results.filter((r: { success: boolean }) => r.success).length;
     const overloaded = results.filter((r: { success: boolean; overloaded?: boolean }) => r.success && r.overloaded).length;
@@ -4390,11 +4517,11 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
 app.post("/planning/replan-queue", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   try {
-    // 1. Delete only future unstarted tasks (preserve past history)
+    // 1. Удаляем только будущие автоматические задачи без факта: история и ручные правки остаются
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const deleted = await prisma.dailyTask.deleteMany({
-      where: { actualQuantity: null, date: { gte: today }, orderItem: { order: { companyId: cid } } },
+      where: { actualQuantity: null, manuallyPlaced: false, date: { gte: today }, orderItem: { order: { companyId: cid } } },
     });
 
     // 2. Get all order items with their orders
@@ -4414,10 +4541,10 @@ app.post("/planning/replan-queue", async (req: Request, res: Response) => {
     const toplan = withRemaining
       .filter(({ remaining }) => remaining > 0)
       .sort((a, b) => {
-        // Как у Raytec: приоритет, затем Дата передачи, затем дата согласования
+        // Приоритет (наше решение — оставляем), затем Дата передачи строки (как у Raytec), затем дата согласования
         if (a.item.order.priority !== b.item.order.priority) return a.item.order.priority - b.item.order.priority;
-        const rayA = a.item.order.raytecDate?.getTime() ?? 0;
-        const rayB = b.item.order.raytecDate?.getTime() ?? 0;
+        const rayA = queueDateMs(a.item);
+        const rayB = queueDateMs(b.item);
         if (rayA !== rayB) return rayA - rayB;
         const dateA = a.item.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
         const dateB = b.item.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
@@ -4432,9 +4559,12 @@ app.post("/planning/replan-queue", async (req: Request, res: Response) => {
     let failedCount = 0;
     const affectedOrderIds = new Set<string>();
 
-    for (const { item } of toplan) {
+    for (const { item, remaining } of toplan) {
       try {
-        const { tasks, overloaded } = await autoPlanOrderItem(item.id);
+        // Остаток позиции — вокруг её ручных задач
+        const manual = await manualPlanOf(item.id, today);
+        if (manual.reservedQty >= remaining) continue;
+        const { tasks, overloaded } = await autoPlanOrderItem(item.id, manual);
         results.push({
           orderItemId: item.id,
           success: true,

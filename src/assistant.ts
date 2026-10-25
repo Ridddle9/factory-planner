@@ -323,6 +323,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
           items: {
             select: {
               quantity: true,
+              transferDate: true,
               product: { select: { code: true, name: true, category: { select: { name: true } } } },
               dailyTasks: {
                 select: { date: true, plannedQuantity: true, actualQuantity: true, team: { select: { name: true } } },
@@ -345,6 +346,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
             product: it.product.name,
             category: it.product.category.name,
             remaining_qty: it.quantity,
+            production_queue_date: it.transferDate ? day(it.transferDate) : summary?.production_queue_date ?? null,
             planned_qty: planned,
             produced_qty: it.dailyTasks.reduce((s, t) => s + (t.actualQuantity ?? 0), 0),
             plan_start: tasks[0] ? day(tasks[0].date) : null,

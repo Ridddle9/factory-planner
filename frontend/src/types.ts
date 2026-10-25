@@ -54,6 +54,7 @@ export interface OrderItem {
   productId: string
   quantity: number
   groupNumber: number | null
+  transferDate?: string | null
   remainingQuantity?: number
   order?: Order
   product?: Product
@@ -84,6 +85,7 @@ export interface DailyTask {
   plannedQuantity: number
   actualQuantity: number | null
   comment: string | null
+  manuallyPlaced?: boolean
   orderItem?: OrderItem & { order?: Order; product?: Product & { category?: ProductCategory & { workshop?: Workshop } } }
   team?: Team | null
 }
