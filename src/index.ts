@@ -976,21 +976,22 @@ function mapPriority(p?: string): number {
 
 
 // Факт из синка: сколько штук позиции обеспечено с прошлого синка (остаток «к обеспечению» уменьшился).
-// Пишется в задачу позиции за сегодня — к уже внесённому за день прибавляется, а не затирается.
-// Если задачи на сегодня нет — создаётся строка факта на бригаду, у которой позиция в плане.
-async function recordSyncFact(orderItemId: string, qty: number, todayMs: number): Promise<void> {
+// Пишется в задачу позиции за день факта — к уже внесённому за день прибавляется, а не затирается.
+// Если задачи на этот день нет — создаётся строка факта на бригаду, у которой позиция в плане
+// (в 1С бригады нет — мастер может поправить её в «Плане на день»).
+async function recordSyncFact(orderItemId: string, qty: number, dateMs: number): Promise<void> {
   if (qty <= 0) return;
-  const date = new Date(todayMs);
-  const today = await prisma.dailyTask.findUnique({ where: { orderItemId_date: { orderItemId, date } } });
-  if (today) {
-    await prisma.dailyTask.update({ where: { id: today.id }, data: { actualQuantity: (today.actualQuantity ?? 0) + qty } });
+  const date = new Date(dateMs);
+  const task = await prisma.dailyTask.findUnique({ where: { orderItemId_date: { orderItemId, date } } });
+  if (task) {
+    await prisma.dailyTask.update({ where: { id: task.id }, data: { actualQuantity: (task.actualQuantity ?? 0) + qty } });
     return;
   }
   const tasks = await prisma.dailyTask.findMany({
     where: { orderItemId, teamId: { not: null }, plannedQuantity: { gt: 0 } },
     select: { date: true, teamId: true },
   });
-  const nearest = tasks.sort((a, b) => Math.abs(a.date.getTime() - todayMs) - Math.abs(b.date.getTime() - todayMs))[0];
+  const nearest = tasks.sort((a, b) => Math.abs(a.date.getTime() - dateMs) - Math.abs(b.date.getTime() - dateMs))[0];
   await prisma.dailyTask.create({
     data: { orderItemId, date, plannedQuantity: 0, actualQuantity: qty, teamId: nearest?.teamId ?? null },
   });
@@ -1103,6 +1104,15 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
     msk.setUTCHours(0, 0, 0, 0);
     return msk.getTime();
   })();
+  // Дата факта: выпуск на баланс бухгалтерия проводит вечером того же дня или утром следующего,
+  // поэтому синк до 12:00 МСК — это выпуск предыдущего рабочего дня, после — сегодняшнего
+  const factMs = (() => {
+    const mskHour = new Date(Date.now() + 3 * 60 * 60 * 1000).getUTCHours();
+    if (mskHour >= 12) return todayMs;
+    const d = new Date(todayMs);
+    do { d.setUTCDate(d.getUTCDate() - 1); } while (!isWorkingDay(d));
+    return d.getTime();
+  })();
 
   // Деактивировать заказы которых нет в текущем синке
   const incomingOrderRefs = new Set((orders ?? []).filter(o => o.ref).map(o => o.ref as string));
@@ -1124,7 +1134,7 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
     } else {
       for (const o of vanished) {
         for (const it of o.items) {
-          await recordSyncFact(it.id, it.quantity, todayMs);
+          await recordSyncFact(it.id, it.quantity, factMs);
           stats.factRecords++;
         }
         await prisma.orderItem.updateMany({ where: { orderId: o.id }, data: { quantity: 0 } });
@@ -1193,7 +1203,7 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
         // Остаток уменьшился — это обеспечено с прошлого синка (только если заказ и раньше был активен:
         // у вернувшихся из архива заказов прошлый остаток устаревший)
         if (existing?.active && !factGuard) {
-          await recordSyncFact(existingItem.id, existingItem.quantity - itemData.quantity, todayMs);
+          await recordSyncFact(existingItem.id, existingItem.quantity - itemData.quantity, factMs);
           if (existingItem.quantity > itemData.quantity) stats.factRecords++;
         }
         await prisma.orderItem.update({ where: { id: existingItem.id }, data: itemFields });
@@ -1212,7 +1222,7 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
     });
     for (const it of gone) {
       if (existing?.active && !factGuard) {
-        await recordSyncFact(it.id, it.quantity, todayMs);
+        await recordSyncFact(it.id, it.quantity, factMs);
         stats.factRecords++;
       }
     }
