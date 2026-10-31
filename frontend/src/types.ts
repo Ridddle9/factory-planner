@@ -87,6 +87,8 @@ export interface DailyTask {
   actualQuantity: number | null
   comment: string | null
   manuallyPlaced?: boolean
+  manualAt?: string | null
+  manualBy?: string | null
   orderItem?: OrderItem & { order?: Order; product?: Product & { category?: ProductCategory & { workshop?: Workshop } } }
   team?: Team | null
 }

@@ -122,7 +122,7 @@ export default function Planning() {
         <div className="tabs" style={{ marginBottom: '1.25rem' }}>
           {([
             ['team-load',         'Загрузка бригад'],
-            ['orders-completion', 'Завершение заказов'],
+            // «Завершение заказов» пока скрыто (вкладка и данные остались)
             ['fact-day',          'Факт за день'],
             ['unplanned',         'Незапланированный факт'],
           ] as [Tab, string][]).map(([t, label]) => (

@@ -193,6 +193,8 @@ model DailyTask {
   actualQuantity  Int?
   comment         String?
   manuallyPlaced  Boolean  @default(false)
+  manualAt        DateTime? // когда задачу закрепили ручной правкой
+  manualBy        String?   // кто закрепил (email пользователя)
 
   orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
   team      Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)

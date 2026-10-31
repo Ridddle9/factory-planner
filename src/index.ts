@@ -500,6 +500,11 @@ async function selectEarliestFreeTeam(
   return candidates[0]?.teamId ?? teamIds[0] ?? null;
 }
 
+// Кто и когда закрепил задачу ручной правкой — показывается в «Графике» при наведении
+function manualStamp(req: Request) {
+  return { manualAt: new Date(), manualBy: req.user?.email ?? null };
+}
+
 // Ручные задачи позиции с даты from: их не трогает никакое автопланирование.
 // Остаток позиции планируется вокруг них (reservedQty / skipDates) и на ту же бригаду.
 async function manualPlanOf(orderItemId: string, from: Date) {
@@ -2644,12 +2649,15 @@ app.post("/daily-tasks", async (req: Request, res: Response) => {
       date: Date;
       plannedQuantity: number;
       manuallyPlaced: boolean;
+      manualAt: Date;
+      manualBy: string | null;
       team?: { connect: { id: string } };
     } = {
       orderItem: { connect: { id: orderItemId } },
       date: taskDate,
       plannedQuantity: plannedQuantity !== undefined ? plannedQuantity : 0,
       manuallyPlaced: true,
+      ...manualStamp(req),
     };
     if (teamId && typeof teamId === "string") {
       createData.team = { connect: { id: teamId } };
@@ -2686,6 +2694,8 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
     teamId?: string | null;
     date?: Date;
     manuallyPlaced?: boolean;
+    manualAt?: Date | null;
+    manualBy?: string | null;
   } = {};
 
   if (plannedQuantity !== undefined) {
@@ -2732,8 +2742,9 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       (data.plannedQuantity !== undefined && data.plannedQuantity !== current.plannedQuantity) ||
       (data.teamId !== undefined && data.teamId !== current.teamId) ||
       (data.date !== undefined && data.date.getTime() !== current.date.getTime());
-    if (changed) data.manuallyPlaced = true;
-    if (typeof manuallyPlaced === "boolean") data.manuallyPlaced = manuallyPlaced;
+    if (changed) Object.assign(data, { manuallyPlaced: true, ...manualStamp(req) });
+    if (manuallyPlaced === true && !changed) Object.assign(data, { manuallyPlaced: true, ...manualStamp(req) });
+    if (manuallyPlaced === false) Object.assign(data, { manuallyPlaced: false, manualAt: null, manualBy: null });
 
     const include = {
       orderItem: { include: { order: true, product: { include: { category: true } } } },
@@ -2755,7 +2766,7 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       mergedIntoOwn = !!dst && !dst.manuallyPlaced;
       const moved = dst
         ? await prisma.dailyTask.update({ where: { id: dst.id }, data: { plannedQuantity: dst.plannedQuantity + qty, teamId, manuallyPlaced: dst.manuallyPlaced }, include })
-        : await prisma.dailyTask.create({ data: { orderItemId: current.orderItemId, date: data.date, plannedQuantity: qty, teamId, manuallyPlaced: true }, include });
+        : await prisma.dailyTask.create({ data: { orderItemId: current.orderItemId, date: data.date, plannedQuantity: qty, teamId, manuallyPlaced: true, ...manualStamp(req) }, include });
       if (current.actualQuantity !== null) await prisma.dailyTask.update({ where: { id }, data: { plannedQuantity: 0 } });
       else await prisma.dailyTask.delete({ where: { id } });
       task = moved;
@@ -2855,7 +2866,7 @@ app.post("/daily-tasks/:id/split", async (req: Request, res: Response) => {
     // Обе части — ручные правки
     const task1 = await prisma.dailyTask.update({
       where: { id },
-      data: { plannedQuantity: qty1, manuallyPlaced: true },
+      data: { plannedQuantity: qty1, manuallyPlaced: true, ...manualStamp(req) },
       include: { orderItem: { include: { order: true, product: { include: { category: { include: { workshop: true } } } } } }, team: true },
     });
 
@@ -2867,6 +2878,7 @@ app.post("/daily-tasks/:id/split", async (req: Request, res: Response) => {
         date: targetDate,
         plannedQuantity: qty2,
         manuallyPlaced: true,
+        ...manualStamp(req),
       },
       include: { orderItem: { include: { order: true, product: { include: { category: { include: { workshop: true } } } } } }, team: true },
     });
@@ -3302,7 +3314,7 @@ app.post("/daily-tasks/assign-team", async (req: Request, res: Response) => {
 
   try {
     // Назначение бригады вручную — ручная правка
-    const updateData = { teamId: teamId === null || teamId === "" ? null : teamId, manuallyPlaced: true };
+    const updateData = { teamId: teamId === null || teamId === "" ? null : teamId, manuallyPlaced: true, ...manualStamp(req) };
 
     const tasks = await prisma.dailyTask.updateMany({
       where: {

@@ -32,6 +32,13 @@ function formatDayOfWeek(iso: string) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'short' })
 }
 
+// «Закрепил: artem@… · 31.10.2026 14:32» — для подсказки и окна задачи
+function manualInfo(cell: { manualAt: string | null; manualBy: string | null }) {
+  if (!cell.manualAt && !cell.manualBy) return 'Кто и когда закрепил — неизвестно (правка до 01.11.2026)'
+  const when = cell.manualAt ? new Date(cell.manualAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+  return `Закрепил: ${[cell.manualBy, when].filter(Boolean).join(' · ')}`
+}
+
 // Нерабочий день: выходной или праздник (те же праздники, что у планировщика — RUSSIAN_HOLIDAYS в src/index.ts)
 const HOLIDAYS = ['01-01', '01-02', '01-03', '01-04', '01-05', '01-06', '01-07', '01-08', '02-23', '03-08', '05-01', '05-09', '06-12', '11-04']
 function isOffDay(iso: string) {
@@ -47,6 +54,9 @@ type CellData = {
   actualQuantity: number | null
   comment: string | null
   manual: boolean
+  // Кто и когда закрепил (ручная правка); у правок до 01.11.2026 неизвестно
+  manualAt: string | null
+  manualBy: string | null
 }
 
 type RowData = {
@@ -338,6 +348,8 @@ export default function Schedule() {
         actualQuantity: task.actualQuantity,
         comment: task.comment,
         manual: task.manuallyPlaced ?? false,
+        manualAt: task.manualAt ?? null,
+        manualBy: task.manualBy ?? null,
       }
     }
     return Array.from(map.values())
@@ -868,7 +880,7 @@ export default function Schedule() {
                                 <span>{row.productName || row.productCode}</span>
                               </span>
                               <span className="day-task-qty">
-                                <strong>{cell.manual && <span className="pin-mark" title="Ручная правка">📌</span>}{cell.plannedQuantity}</strong>
+                                <strong>{cell.manual && <span className="pin-mark" title={manualInfo(cell)}>📌</span>}{cell.plannedQuantity}</strong>
                                 {cell.actualQuantity !== null && <span>✓{cell.actualQuantity}</span>}
                               </span>
                             </button>
@@ -1007,7 +1019,7 @@ export default function Schedule() {
                                 cursor: 'pointer',
                               }}
                               {...(cell
-                                ? tipProps(`${row.productName || row.productCode}\nПлан: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, факт: ${cell.actualQuantity}` : ''}${cell.manual ? '\nРучная правка — перепланирование не трогает' : ''}${cell.comment ? `\n${cell.comment}` : ''}`)
+                                ? tipProps(`${row.productName || row.productCode}\nПлан: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, факт: ${cell.actualQuantity}` : ''}${cell.manual ? `\n📌 Ручная правка — перепланирование не трогает\n${manualInfo(cell)}` : ''}${cell.comment ? `\n${cell.comment}` : ''}`)
                                 : {})}
                             >
                               {cell && cell.plannedQuantity > 0 && (
@@ -1242,6 +1254,7 @@ export default function Schedule() {
                   {popup.cell.manual && (
                     <div className="pin-note">
                       <span>📌 Ручная правка — перепланирование её не трогает</span>
+                      <span style={{ fontSize: '0.75rem' }}>{manualInfo(popup.cell)}</span>
                       <button type="button" className="btn btn-secondary" onClick={handleUnpin} disabled={saving}>Снять закрепление</button>
                     </div>
                   )}
