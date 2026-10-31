@@ -86,11 +86,17 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
     .filter(t => t.days.length > 0)
     .sort((a, b) => b.free - a.free), [matrix])
 
-  const openTeam = (id: string) => { setTeamId(id); setMode('brigade') }
+  // В бригаду проваливаются кликом по ней; «Назад» возвращает в тот вид, откуда пришли
+  const [backTo, setBackTo] = useState<Exclude<Mode, 'brigade'>>('all')
+  const openTeam = (id: string) => {
+    if (mode !== 'brigade') setBackTo(mode)
+    setTeamId(id)
+    setMode('brigade')
+  }
+  const backLabel = { all: 'Все бригады', overload: 'Перегрузка', underload: 'Недогрузка' }[backTo]
 
-  const modes: [Mode, string, number?][] = [
+  const modes: [Exclude<Mode, 'brigade'>, string, number?][] = [
     ['all', 'Все бригады'],
-    ['brigade', 'По бригаде'],
     ['overload', 'Перегрузка', overload.length],
     ['underload', 'Недогрузка'],
   ]
@@ -99,13 +105,15 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
     <>
       <div className="toolbar">
         {mode === 'brigade' && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Бригада:
-            <select value={teamId} onChange={e => setTeamId(e.target.value)} style={{ width: 220 }}>
-              <option value="">— выберите —</option>
-              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </label>
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setMode(backTo)}>← {backLabel}</button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              Бригада:
+              <select value={teamId} onChange={e => setTeamId(e.target.value)} style={{ width: 220 }}>
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </label>
+          </>
         )}
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           С: <input type="date" value={dateFrom} onChange={e => e.target.value && setDateFrom(e.target.value)} />
@@ -113,14 +121,16 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           По: <input type="date" value={dateTo} onChange={e => e.target.value && setDateTo(e.target.value)} />
         </label>
-        <div style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {modes.map(([m, label, count]) => (
-            <button key={m} type="button" className={`btn btn-sm ${mode === m ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode(m)}>
-              {label}
-              {!!count && mode !== m && <span className="badge badge-danger" style={{ marginLeft: 5 }}>{count}</span>}
-            </button>
-          ))}
-        </div>
+        {mode !== 'brigade' && (
+          <div style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {modes.map(([m, label, count]) => (
+              <button key={m} type="button" className={`btn btn-sm ${mode === m ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode(m)}>
+                {label}
+                {!!count && mode !== m && <span className="badge badge-danger" style={{ marginLeft: 5 }}>{count}</span>}
+              </button>
+            ))}
+          </div>
+        )}
         {loading && <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Загрузка…</span>}
       </div>
 
@@ -184,7 +194,7 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
       )}
 
       {mode === 'brigade' && (
-        !teamId ? <div className="empty">Выберите бригаду.</div> : detail && (
+        detail && (
           <>
             <h3 style={{ margin: '0 0 0.75rem', fontWeight: 700 }}>{detail.teamName} <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.85rem' }}>· {detail.headcount} чел.</span></h3>
             {detail.rows.length === 0 ? <div className="empty">Нет задач за период.</div> : (
