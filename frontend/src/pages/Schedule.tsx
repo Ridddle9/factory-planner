@@ -125,8 +125,12 @@ export default function Schedule() {
   const [moveTeams, setMoveTeams] = useState<{ teamId: string; teamName: string; perDay: number }[]>([])
   const [moveTargetLoad, setMoveTargetLoad] = useState<TeamLoad | null>(null)
   // Итог переноса: что сдвинулось вправо и что встало на освободившееся место
-  type CascadeItem = { orderNumber: string; product: string; qty: number; date: string }
-  type Cascade = { pushed: CascadeItem[]; pulled: CascadeItem[]; steps: number; overload: { load: number; capacity: number } | null }
+  type Cascade = {
+    shifted: { orderNumber: string; product: string; date: string; prevDate: string }[]
+    pulled: { orderNumber: string; product: string; qty: number; date: string }[]
+    overload: { load: number; capacity: number } | null
+    mergedIntoOwn: boolean
+  }
   type MoveResult = Cascade & { title: string; freedDate: string; targetDate: string }
   const [moveResult, setMoveResult] = useState<MoveResult | null>(null)
 
@@ -524,7 +528,7 @@ export default function Schedule() {
   }, [moveDialog?.teamId, moveDialog?.date])
 
   const showCascade = (title: string, cascade: Cascade | null | undefined, freedDate: string, targetDate: string) => {
-    setMoveResult({ title, pushed: cascade?.pushed ?? [], pulled: cascade?.pulled ?? [], steps: cascade?.steps ?? 0, overload: cascade?.overload ?? null, freedDate, targetDate })
+    setMoveResult({ title, shifted: cascade?.shifted ?? [], pulled: cascade?.pulled ?? [], overload: cascade?.overload ?? null, mergedIntoOwn: cascade?.mergedIntoOwn ?? false, freedDate, targetDate })
   }
 
   const submitMove = async () => {
@@ -1093,16 +1097,17 @@ export default function Schedule() {
           <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="move-result-title">
             <h3 id="move-result-title" className="form-panel-title">Задача перенесена</h3>
             <p style={{ margin: '0 0 12px' }}>{moveResult.title}.</p>
-            {moveResult.pushed.length > 0 && (
-              <div className="move-block">
-                <div className="move-block-title">Не поместились {formatDateShort(moveResult.targetDate)} — сдвинуты вправо</div>
-                <ul>{moveResult.pushed.map((p, i) => <li key={i}><strong>{p.orderNumber}</strong> · {p.product} — {p.qty} шт на {formatDateShort(p.date)}</li>)}</ul>
-              </div>
-            )}
             {moveResult.pulled.length > 0 && (
               <div className="move-block">
                 <div className="move-block-title">На освободившееся место {formatDateShort(moveResult.freedDate)} встали</div>
-                <ul>{moveResult.pulled.map((p, i) => <li key={i}><strong>{p.orderNumber}</strong> · {p.product} — {p.qty} шт (были на {formatDateShort(p.date)})</li>)}</ul>
+                <ul>{moveResult.pulled.map((p, i) => <li key={i}><strong>{p.orderNumber}</strong> · {p.product} — {p.qty} шт</li>)}</ul>
+              </div>
+            )}
+            {moveResult.shifted.length > 0 && (
+              <div className="move-block">
+                <div className="move-block-title">Сдвинулось окончание</div>
+                <ul>{moveResult.shifted.slice(0, 8).map((p, i) => <li key={i}><strong>{p.orderNumber}</strong> · {p.product} — до {formatDateShort(p.date)} вместо {formatDateShort(p.prevDate)}</li>)}</ul>
+                {moveResult.shifted.length > 8 && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>и ещё {moveResult.shifted.length - 8}</div>}
               </div>
             )}
             {moveResult.overload && (
@@ -1111,13 +1116,13 @@ export default function Schedule() {
                 в этот день стоят ручные задачи, их автоматика не сдвигает. Перенесите лишнее вручную.
               </div>
             )}
-            {moveResult.pushed.length === 0 && moveResult.pulled.length === 0 && !moveResult.overload && (
-              <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)' }}>Места хватило — другие задачи не сдвигались.</p>
+            {moveResult.mergedIntoOwn && (
+              <div className="move-note" style={{ marginBottom: 12 }}>
+                {formatDateShort(moveResult.targetDate)} эта позиция и так в работе: перенесённое количество добавилось к ней, и план позиции пересчитан по очереди бригады.
+              </div>
             )}
-            {moveResult.steps > moveResult.pushed.length + moveResult.pulled.length && (
-              <p style={{ margin: '0 0 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Очередь бригады пересчитана дальше по дням (сдвигов всего: {moveResult.steps}).
-              </p>
+            {moveResult.shifted.length === 0 && moveResult.pulled.length === 0 && !moveResult.overload && !moveResult.mergedIntoOwn && (
+              <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)' }}>Места хватило — другие задачи не сдвигались.</p>
             )}
             <div className="form-actions">
               <button type="button" className="btn btn-primary" onClick={() => setMoveResult(null)} autoFocus>Понятно</button>
