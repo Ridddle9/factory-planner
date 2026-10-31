@@ -93,7 +93,7 @@ export default function Workshops() {
         {list.length === 0 ? (
           <div className="empty">Нет участков. Добавьте первый.</div>
         ) : (
-          <table className="stack">
+          <table className="stack sticky-head">
             <thead>
               <tr>
                 <th>Название</th>

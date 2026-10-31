@@ -211,7 +211,7 @@ export default function Teams() {
         {list.length === 0 ? (
           <div className="empty">Нет бригад. Добавьте первую.</div>
         ) : (
-          <table className="stack">
+          <table className="stack sticky-head">
             <thead>
               <tr>
                 <th>Название</th>

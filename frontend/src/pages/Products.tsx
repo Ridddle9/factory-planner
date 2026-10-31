@@ -141,7 +141,7 @@ export default function Products() {
         {filtered.length === 0 ? (
           <div className="empty">{search ? 'Ничего не найдено' : 'Нет товаров. Сначала добавьте категории.'}</div>
         ) : (
-          <table className="stack">
+          <table className="stack sticky-head">
             <thead>
               <tr>
                 <th>Код</th>

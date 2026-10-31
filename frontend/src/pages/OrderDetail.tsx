@@ -255,7 +255,7 @@ export default function OrderDetail() {
         {items.length === 0 ? (
           <div className="empty">Нет позиций. Добавьте товары из справочника.</div>
         ) : (
-          <table className="stack">
+          <table className="stack sticky-head">
             <thead>
               <tr>
                 <th>Товар</th>

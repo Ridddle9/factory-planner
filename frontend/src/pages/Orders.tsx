@@ -150,7 +150,7 @@ export default function Orders() {
             {tab === 'active' ? 'Нет актуальных заказов.' : 'Нет архивных заказов.'}
           </div>
         ) : (
-          <table className="stack">
+          <table className="stack sticky-head">
             <thead>
               <tr>
                 <th>Номер</th>
