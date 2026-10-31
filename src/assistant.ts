@@ -213,7 +213,33 @@ function matchTeams<T extends { name: string }>(teams: T[], query: string): T[] 
 
 // ─── Реализация функций ──────────────────────────────────────────────────────
 
+// Скрытые категории помощник не показывает (как и интерфейс): ни позиции, ни бригады,
+// занятые только ими. В загрузке бригад скрытая работа учитывается — она занимает бригаду.
+const VISIBLE = { category: { visible: true } } as const;
+
 function makeTools(prisma: PrismaClient, cid: string) {
+  async function visibleTeams() {
+    const teams = await prisma.team.findMany({
+      where: { companyId: cid },
+      select: {
+        id: true, name: true,
+        productCapacities: { where: { capacityPerDay: { gt: 0 } }, select: { product: { select: { category: { select: { visible: true } } } } } },
+        categories: { select: { category: { select: { visible: true } } } },
+        dailyTasks: { where: { plannedQuantity: { gt: 0 } }, select: { orderItem: { select: { product: { select: { category: { select: { visible: true } } } } } } } },
+      },
+    });
+    return teams
+      .filter(t => {
+        const flags = [
+          ...t.productCapacities.map(c => c.product.category.visible),
+          ...t.categories.map(c => c.category.visible),
+          ...t.dailyTasks.map(d => d.orderItem.product.category.visible),
+        ];
+        return flags.length === 0 || flags.some(Boolean);
+      })
+      .map(t => ({ id: t.id, name: t.name }));
+  }
+
   async function capacityMaps(productIds: string[]) {
     const [ptcs, teams, products] = await Promise.all([
       prisma.productTeamCapacity.findMany({
@@ -245,7 +271,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
       where: { id: { in: orderIds }, companyId: cid },
       select: {
         id: true, orderNumber: true, customer: true, manager: true, priority: true, active: true, raytecDate: true,
-        items: { select: { quantity: true, dailyTasks: { select: { date: true, plannedQuantity: true, actualQuantity: true } } } },
+        items: { where: { product: VISIBLE }, select: { quantity: true, dailyTasks: { select: { date: true, plannedQuantity: true, actualQuantity: true } } } },
       },
     });
     return orders.map(o => {
@@ -288,7 +314,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
   async function findOrderIds(query: string, includeArchive: boolean) {
     const q = lc(query);
     const orders = await prisma.order.findMany({
-      where: { companyId: cid, ...(includeArchive ? {} : { active: true }) },
+      where: { companyId: cid, ...(includeArchive ? {} : { active: true }), items: { some: { product: VISIBLE } } },
       select: { id: true, orderNumber: true, customer: true, manager: true },
     });
     const exact = orders.filter(o => lc(o.orderNumber) === q);
@@ -321,6 +347,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
         select: {
           orderNumber: true, customer: true, manager: true, priority: true, active: true, raytecDate: true, description: true,
           items: {
+            where: { product: VISIBLE },
             select: {
               quantity: true,
               transferDate: true,
@@ -361,7 +388,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
     async team_schedule(args: Args) {
       const range = parseRange(args, MAX_RANGE_DAYS);
       if ("error" in range) return range;
-      const allTeams = await prisma.team.findMany({ where: { companyId: cid }, select: { id: true, name: true } });
+      const allTeams = await visibleTeams();
       const teams = matchTeams(allTeams, str(args, "team"));
       if (teams.length === 0) return { error: `Бригада «${str(args, "team")}» не найдена`, teams: allTeams.map(t => t.name) };
       const tasks = await prisma.dailyTask.findMany({
@@ -369,7 +396,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
           teamId: { in: teams.map(t => t.id) },
           date: { gte: range.from, lte: range.to },
           plannedQuantity: { gt: 0 },
-          orderItem: { order: { companyId: cid } },
+          orderItem: { order: { companyId: cid }, product: VISIBLE },
         },
         select: {
           date: true, plannedQuantity: true, actualQuantity: true, loadShare: true, teamId: true,
@@ -405,7 +432,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
     async team_load(args: Args) {
       const range = parseRange(args, MAX_RANGE_DAYS);
       if ("error" in range) return range;
-      const allTeams = await prisma.team.findMany({ where: { companyId: cid }, select: { id: true, name: true } });
+      const allTeams = await visibleTeams();
       const teams = matchTeams(allTeams, str(args, "team"));
       if (teams.length === 0) return { error: `Бригада «${str(args, "team")}» не найдена`, teams: allTeams.map(t => t.name) };
       const tasks = await prisma.dailyTask.findMany({
@@ -441,7 +468,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
       const q = lc(str(args, "query"));
       if (!q) return { error: "Пустой запрос" };
       const products = await prisma.product.findMany({
-        where: { companyId: cid },
+        where: { companyId: cid, ...VISIBLE },
         select: { id: true, code: true, name: true },
       });
       const exact = products.filter(p => lc(p.code) === q);
@@ -476,7 +503,7 @@ function makeTools(prisma: PrismaClient, cid: string) {
 
     async unplanned_items() {
       const items = await prisma.orderItem.findMany({
-        where: { order: { companyId: cid, active: true }, quantity: { gt: 0 } },
+        where: { order: { companyId: cid, active: true }, quantity: { gt: 0 }, product: VISIBLE },
         select: {
           quantity: true,
           order: { select: { orderNumber: true, customer: true } },
@@ -519,8 +546,9 @@ function makeTools(prisma: PrismaClient, cid: string) {
 
     async list_teams() {
       const today = new Date(day(new Date()) + "T00:00:00.000Z");
+      const visibleIds = (await visibleTeams()).map(t => t.id);
       const teams = await prisma.team.findMany({
-        where: { companyId: cid },
+        where: { companyId: cid, id: { in: visibleIds } },
         select: {
           name: true, headcount: true,
           _count: { select: { productCapacities: { where: { capacityPerDay: { gt: 0 } } } } },

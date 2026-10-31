@@ -4,6 +4,8 @@ import type { CategoryBlock, ProductCategory, Team, Workshop } from '../types'
 
 export default function Categories() {
   const [list, setList] = useState<ProductCategory[]>([])
+  const [hiddenList, setHiddenList] = useState<ProductCategory[]>([])
+  const [tab, setTab] = useState<'active' | 'hidden'>('active')
   const [workshops, setWorkshops] = useState<Workshop[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
@@ -26,10 +28,11 @@ export default function Categories() {
 
   const load = async () => {
     setLoading(true)
-    const [catRes, workRes, teamsRes] = await Promise.all([
+    const [catRes, workRes, teamsRes, hiddenRes] = await Promise.all([
       api.get<ProductCategory[]>('/categories'),
       api.get<Workshop[]>('/workshops'),
       api.get<Team[]>('/teams'),
+      api.get<ProductCategory[]>('/categories?hidden=1'),
     ])
     setLoading(false)
     if (catRes.error) {
@@ -39,6 +42,7 @@ export default function Categories() {
     if (workRes.data) setWorkshops(workRes.data)
     if (teamsRes.data) setTeams(teamsRes.data)
     setList(catRes.data ?? [])
+    setHiddenList(hiddenRes.data ?? [])
     setError(null)
   }
 
@@ -166,6 +170,14 @@ export default function Categories() {
     setSaving(false)
   }
 
+  // Скрытие — только отображение: синк и планирование категории продолжаются
+  const setVisible = async (c: ProductCategory, visible: boolean) => {
+    if (!visible && !confirm(`Скрыть категорию «${c.name}»?\n\nЕё товары, позиции заказов, задачи и бригады, занятые только ею, пропадут из всех разделов. Синк из 1С и планирование продолжатся. Вернуть можно на вкладке «Скрытые».`)) return
+    const { error: e } = await api.put(`/categories/${c.id}`, { visible })
+    if (e) setError(e)
+    else load()
+  }
+
   const remove = async (id: string) => {
     if (!confirm('Удалить категорию?')) return
     const { error: e } = await api.delete(`/categories/${id}`)
@@ -180,6 +192,43 @@ export default function Categories() {
       <h1 className="page-title">Категории номенклатуры</h1>
       {error && <div className="error">{error}</div>}
       <div className="card">
+        <div className="tabs" style={{ marginBottom: '1rem' }}>
+          <button type="button" className={`tab ${tab === 'active' ? 'active' : ''}`} onClick={() => setTab('active')}>Активные</button>
+          <button type="button" className={`tab ${tab === 'hidden' ? 'active' : ''}`} onClick={() => setTab('hidden')}>
+            Скрытые{hiddenList.length > 0 && <span className="badge badge-neutral" style={{ marginLeft: 6 }}>{hiddenList.length}</span>}
+          </button>
+        </div>
+        {tab === 'hidden' ? (
+          hiddenList.length === 0 ? (
+            <div className="empty">Скрытых категорий нет.</div>
+          ) : (
+            <>
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 10 }}>
+                Скрытые категории не видны в приложении, но синк из 1С и планирование по ним продолжаются.
+              </div>
+              <table className="stack">
+                <thead>
+                  <tr>
+                    <th>Название</th>
+                    <th>Участок</th>
+                    <th style={{ width: 160 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hiddenList.map(c => (
+                    <tr key={c.id}>
+                      <td className="stack-title">{c.name || '—'}</td>
+                      <td data-label="Участок">{c.workshop?.name ?? '—'}</td>
+                      <td className="stack-actions">
+                        <button type="button" className="btn btn-primary btn-sm" onClick={() => setVisible(c, true)}>Восстановить</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )
+        ) : (<>
         <div className="toolbar">
           <button type="button" className="btn btn-primary" onClick={openCreate} disabled={workshops.length === 0}>
             Добавить категорию
@@ -227,6 +276,8 @@ export default function Categories() {
                     {' '}
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openEdit(c)}>Изменить</button>
                     {' '}
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setVisible(c, false)}>Скрыть</button>
+                    {' '}
                     <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(c.id)}>Удалить</button>
                   </td>
                 </tr>
@@ -234,6 +285,7 @@ export default function Categories() {
             </tbody>
           </table>
         )}
+        </>)}
       </div>
 
       {teamsForCategory && (

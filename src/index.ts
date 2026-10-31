@@ -365,6 +365,37 @@ async function getAvailableTeamsForCategory(categoryId: string, companyId: strin
 }
 
 
+// ─── Скрытые категории ───────────────────────────────────────────────────────
+// Скрытие — только отображение: синк по-прежнему сохраняет заказы и товары скрытых категорий,
+// планировщик их планирует, загрузка бригад их учитывает. Интерфейс их не показывает.
+const VISIBLE_PRODUCT = { category: { visible: true } } as const;
+
+// Бригады, вся работа которых — скрытые категории (нормы, связи с категориями, задачи плана).
+// Бригады без какой-либо работы не считаются скрытыми.
+async function hiddenTeamIds(companyId: string): Promise<Set<string>> {
+  const hiddenCats = await prisma.productCategory.count({ where: { companyId, visible: false } });
+  if (hiddenCats === 0) return new Set();
+  const teams = await prisma.team.findMany({
+    where: { companyId },
+    select: {
+      id: true,
+      productCapacities: { where: { capacityPerDay: { gt: 0 } }, select: { product: { select: { category: { select: { visible: true } } } } } },
+      categories: { select: { category: { select: { visible: true } } } },
+      dailyTasks: { where: { plannedQuantity: { gt: 0 } }, select: { orderItem: { select: { product: { select: { category: { select: { visible: true } } } } } } } },
+    },
+  });
+  const hidden = new Set<string>();
+  for (const t of teams) {
+    const flags = [
+      ...t.productCapacities.map(c => c.product.category.visible),
+      ...t.categories.map(c => c.category.visible),
+      ...t.dailyTasks.map(d => d.orderItem.product.category.visible),
+    ];
+    if (flags.length > 0 && flags.every(v => !v)) hidden.add(t.id);
+  }
+  return hidden;
+}
+
 // Ключ очереди планирования — Дата передачи, как у Raytec: своя у строки (из 1С), иначе дата заказа;
 // без даты — сегодня (Raytec подставляет ТекущаяДата), а не начало очереди
 function queueDateMs(item: { transferDate?: Date | null; order: { raytecDate: Date | null } }): number {
@@ -1464,7 +1495,7 @@ app.post("/order-items/plan-unplanned", async (req: Request, res: Response) => {
     where: {
       quantity: { gt: 0 },
       order: { companyId: cid, active: true },
-      product: { category: { visible: true, workshop: { visible: true } } },
+      product: { category: { workshop: { visible: true } } },
     },
     include: { dailyTasks: true, order: { select: { approvedAt: true, priority: true, raytecDate: true } } },
   });
@@ -1581,8 +1612,10 @@ app.get("/categories/no-team", async (req: Request, res: Response) => {
 
 app.get("/categories", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
+  // ?hidden=1 — раздел «Скрытые» (восстановление)
+  const hidden = req.query.hidden === "1";
   const categories = await prisma.productCategory.findMany({
-    where: { companyId: cid, visible: true, workshop: { visible: true } },
+    where: hidden ? { companyId: cid, visible: false } : { companyId: cid, visible: true, workshop: { visible: true } },
     include: { workshop: true },
     orderBy: { name: "asc" },
   });
@@ -1678,16 +1711,7 @@ app.put("/categories/:id", async (req: Request, res: Response) => {
 
     const category = await prisma.productCategory.update({ where: { id }, data });
 
-    // При скрытии категории удаляем все плановые задачи по её позициям
-    if (visible === false && existing.visible === true) {
-      await prisma.dailyTask.deleteMany({
-        where: {
-          orderItem: { product: { categoryId: id } },
-          actualQuantity: null,
-        },
-      });
-    }
-
+    // Скрытие — только отображение: план и факт категории остаются, планирование продолжается
     res.json(category);
   } catch (err) {
     res.status(404).json({ error: "Category not found" });
@@ -1816,7 +1840,7 @@ app.delete("/category-blocks/:id", async (req: Request, res: Response) => {
 app.get("/products", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const products = await prisma.product.findMany({
-    where: { companyId: cid },
+    where: { companyId: cid, ...VISIBLE_PRODUCT },
     include: { category: true, teamCapacities: { include: { team: true } } },
     orderBy: { code: "asc" },
   });
@@ -1923,8 +1947,9 @@ app.delete("/products/:id", async (req: Request, res: Response) => {
 
 app.get("/teams", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
+  const hidden = await hiddenTeamIds(cid);
   const teams = await prisma.team.findMany({
-    where: { companyId: cid },
+    where: { companyId: cid, id: { notIn: [...hidden] } },
     orderBy: { name: "asc" },
   });
   res.json(teams);
@@ -1997,10 +2022,14 @@ app.get("/orders", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const orders = await prisma.order.findMany({
     where: { companyId: cid, active: true },
-    include: { items: { include: { product: true } } },
+    include: { items: { include: { product: { include: { category: { select: { visible: true } } } } } } },
     orderBy: { orderNumber: "asc" },
   });
-  res.json(orders);
+  // Позиции скрытых категорий не показываем; заказ только из них — тоже
+  res.json(orders
+    .map(o => ({ ...o, visibleItems: o.items.filter(i => i.product.category.visible) }))
+    .filter(o => o.items.length === 0 || o.visibleItems.length > 0)
+    .map(({ visibleItems, ...o }) => ({ ...o, items: visibleItems })));
 });
 
 app.post("/orders", async (req: Request, res: Response) => {
@@ -2122,7 +2151,9 @@ app.get("/order-items", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const orderId = req.query.orderId as string | undefined;
 
-  const where = orderId ? { orderId, order: { companyId: cid } } : { order: { companyId: cid } };
+  const where = orderId
+    ? { orderId, order: { companyId: cid }, product: VISIBLE_PRODUCT }
+    : { order: { companyId: cid }, product: VISIBLE_PRODUCT };
 
   const items = await prisma.orderItem.findMany({
     where,
@@ -2375,6 +2406,12 @@ app.get("/daily-tasks/plan", async (req: Request, res: Response) => {
       },
     };
   }
+
+  // Скрытые категории в графике не показываем
+  where.orderItem = {
+    ...where.orderItem,
+    product: { ...where.orderItem?.product, category: { ...where.orderItem?.product?.category, visible: true } },
+  };
 
   const tasks = await prisma.dailyTask.findMany({
     where,
@@ -3447,7 +3484,7 @@ async function teamTasksWithLoad(companyId: string, from: Date, to: Date, teamId
         select: {
           id: true,
           order: { select: { orderNumber: true, customer: true } },
-          product: { select: { id: true, code: true, name: true, capacityPerDay: true, category: { select: { capacityPerTeamPerDay: true } } } },
+          product: { select: { id: true, code: true, name: true, capacityPerDay: true, category: { select: { capacityPerTeamPerDay: true, visible: true } } } },
         },
       },
     },
@@ -3497,9 +3534,12 @@ app.get("/planning/load-matrix", async (req: Request, res: Response) => {
     cells.set(key, c);
   }
   const withTasks = new Set(tasks.map(t => t.teamId));
+  // Бригады, занятые только скрытыми категориями, не показываем; у остальных загрузка
+  // считается со скрытой работой — она реально занимает бригаду
+  const hidden = await hiddenTeamIds(cid);
 
   const result = teams
-    .filter(t => t._count.productCapacities > 0 || withTasks.has(t.id))
+    .filter(t => !hidden.has(t.id) && (t._count.productCapacities > 0 || withTasks.has(t.id)))
     .map(t => {
       const byDay = days.map(d => {
         const c = cells.get(`${t.id}|${d.date}`);
@@ -3549,6 +3589,17 @@ app.get("/planning/team-load", async (req: Request, res: Response) => {
   const rows = new Map<string, { orderItemId: string; orderNumber: string; customer: string; productCode: string; productName: string; capPerDay: number; cells: Record<string, { planned: number; actual: number | null; share: number; manual: boolean }> }>();
   for (const t of tasks) {
     if (t.plannedQuantity <= 0 && !t.actualQuantity) continue;
+    // Скрытые категории — одной строкой, чтобы загрузка дня сходилась с позициями
+    if (!t.orderItem.product.category.visible) {
+      const h = rows.get("hidden") ?? { orderItemId: "hidden", orderNumber: "Скрытые категории", customer: "", productCode: "", productName: "позиции скрытых категорий", capPerDay: 0, cells: {} };
+      const c = h.cells[t.date] ?? { planned: 0, actual: null, share: 0, manual: false };
+      c.planned += t.plannedQuantity;
+      c.share = Math.round((c.share + t.share) * 1000) / 1000;
+      if (t.actualQuantity) c.actual = (c.actual ?? 0) + t.actualQuantity;
+      h.cells[t.date] = c;
+      rows.set("hidden", h);
+      continue;
+    }
     const r = rows.get(t.orderItem.id) ?? {
       orderItemId: t.orderItem.id,
       orderNumber: t.orderItem.order.orderNumber,
@@ -4320,7 +4371,7 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
 
   const tasks = await prisma.dailyTask.findMany({
     where: {
-      orderItem: { order: { companyId: cid } },
+      orderItem: { order: { companyId: cid }, product: VISIBLE_PRODUCT },
       ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}),
     },
     include: {
@@ -4579,9 +4630,10 @@ app.post("/planning/replan-queue", async (req: Request, res: Response) => {
 app.get("/planning/orders-completion", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const orders = await prisma.order.findMany({
-    where: { companyId: cid, active: true },
+    where: { companyId: cid, active: true, items: { some: { product: VISIBLE_PRODUCT } } },
     include: {
       items: {
+        where: { product: VISIBLE_PRODUCT },
         include: {
           product: { include: { category: true } },
           dailyTasks: {
@@ -4671,7 +4723,7 @@ app.get("/planning/fact-day", async (req: Request, res: Response) => {
     where: {
       date: { gte: dayStart, lte: dayEnd },
       actualQuantity: { gt: 0 },
-      orderItem: { order: { companyId: cid } },
+      orderItem: { order: { companyId: cid }, product: VISIBLE_PRODUCT },
     },
     include: {
       team: { select: { id: true, name: true } },
@@ -4810,7 +4862,7 @@ app.get("/planning/unplanned-production", async (req: Request, res: Response) =>
   const latest = await prisma.dailyTask.findFirst({
     where: {
       actualQuantity: { gt: 0 },
-      orderItem: { order: { companyId: cid } },
+      orderItem: { order: { companyId: cid }, product: VISIBLE_PRODUCT },
     },
     orderBy: { date: "desc" },
     select: { date: true },
@@ -4823,7 +4875,7 @@ app.get("/planning/unplanned-production", async (req: Request, res: Response) =>
       date: latest.date,
       plannedQuantity: 0,
       actualQuantity: { gt: 0 },
-      orderItem: { order: { companyId: cid } },
+      orderItem: { order: { companyId: cid }, product: VISIBLE_PRODUCT },
     },
     include: {
       orderItem: {
