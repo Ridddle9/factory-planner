@@ -1616,7 +1616,7 @@ app.get("/categories", async (req: Request, res: Response) => {
   const hidden = req.query.hidden === "1";
   const categories = await prisma.productCategory.findMany({
     where: hidden ? { companyId: cid, visible: false } : { companyId: cid, visible: true, workshop: { visible: true } },
-    include: { workshop: true },
+    include: { workshop: true, _count: { select: { products: true } } },
     orderBy: { name: "asc" },
   });
   res.json(categories);
@@ -1723,8 +1723,15 @@ app.delete("/categories/:id", async (req: Request, res: Response) => {
   const id = req.params.id as string;
 
   try {
-    const existing = await prisma.productCategory.findFirst({ where: { id, companyId: cid } });
+    const existing = await prisma.productCategory.findFirst({ where: { id, companyId: cid }, include: { _count: { select: { products: true } } } });
     if (!existing) { res.status(404).json({ error: "Category not found" }); return; }
+    // Товары категорию держат (связь Restrict) — объясняем, а не падаем с «не найдена»
+    if (existing._count.products > 0) {
+      const n = existing._count.products;
+      const word = n % 10 === 1 && n % 100 !== 11 ? "товар" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "товара" : "товаров";
+      res.status(409).json({ error: `Нельзя удалить категорию «${existing.name}»: в ней ${n} ${word}. Сначала удалите все товары категории или скройте её.` });
+      return;
+    }
     await prisma.productCategory.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {

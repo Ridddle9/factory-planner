@@ -2,10 +2,18 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { CategoryBlock, ProductCategory, Team, Workshop } from '../types'
 
+// 1 товар, 2 товара, 5 товаров
+function productsLabel(n: number) {
+  const word = n % 10 === 1 && n % 100 !== 11 ? 'товар' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'товара' : 'товаров'
+  return `${n} ${word}`
+}
+
 export default function Categories() {
   const [list, setList] = useState<ProductCategory[]>([])
   const [hiddenList, setHiddenList] = useState<ProductCategory[]>([])
   const [tab, setTab] = useState<'active' | 'hidden'>('active')
+  // Попап «нельзя удалить — в категории есть товары»
+  const [cantDelete, setCantDelete] = useState<ProductCategory | null>(null)
   const [workshops, setWorkshops] = useState<Workshop[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
@@ -171,16 +179,17 @@ export default function Categories() {
   }
 
   // Скрытие — только отображение: синк и планирование категории продолжаются
-  const setVisible = async (c: ProductCategory, visible: boolean) => {
-    if (!visible && !confirm(`Скрыть категорию «${c.name}»?\n\nЕё товары, позиции заказов, задачи и бригады, занятые только ею, пропадут из всех разделов. Синк из 1С и планирование продолжатся. Вернуть можно на вкладке «Скрытые».`)) return
+  const setVisible = async (c: ProductCategory, visible: boolean, confirmed = false) => {
+    if (!visible && !confirmed && !confirm(`Скрыть категорию «${c.name}»?\n\nЕё товары, позиции заказов, задачи и бригады, занятые только ею, пропадут из всех разделов. Синк из 1С и планирование продолжатся. Вернуть можно на вкладке «Скрытые».`)) return
     const { error: e } = await api.put(`/categories/${c.id}`, { visible })
     if (e) setError(e)
     else load()
   }
 
-  const remove = async (id: string) => {
-    if (!confirm('Удалить категорию?')) return
-    const { error: e } = await api.delete(`/categories/${id}`)
+  const remove = async (c: ProductCategory) => {
+    if ((c._count?.products ?? 0) > 0) { setCantDelete(c); return }
+    if (!confirm(`Удалить категорию «${c.name}»?`)) return
+    const { error: e } = await api.delete(`/categories/${c.id}`)
     if (e) setError(e)
     else load()
   }
@@ -278,7 +287,7 @@ export default function Categories() {
                     {' '}
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setVisible(c, false)}>Скрыть</button>
                     {' '}
-                    <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(c.id)}>Удалить</button>
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(c)}>Удалить</button>
                   </td>
                 </tr>
               ))}
@@ -287,6 +296,29 @@ export default function Categories() {
         )}
         </>)}
       </div>
+
+      {cantDelete && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={e => { if (e.target === e.currentTarget) setCantDelete(null) }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="cant-delete-title"
+            style={{ background: '#fff', borderRadius: 12, padding: 24, width: 440, maxWidth: '90vw', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}>
+            <h3 id="cant-delete-title" style={{ margin: '0 0 0.75rem' }}>Категорию нельзя удалить</h3>
+            <p style={{ margin: '0 0 0.6rem', lineHeight: 1.5 }}>
+              В категории «{cantDelete.name}» {productsLabel(cantDelete._count?.products ?? 0)}. Удалить категорию можно только после того, как удалены все товары внутри неё.
+            </p>
+            <p style={{ margin: '0 0 1.25rem', lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+              Вместо удаления категорию можно скрыть: она пропадёт из всех разделов, а синк из 1С и планирование по ней продолжатся. Вернуть её можно на вкладке «Скрытые».
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setCantDelete(null)}>Отмена</button>
+              <button type="button" className="btn btn-primary" autoFocus
+                onClick={async () => { const c = cantDelete; setCantDelete(null); await setVisible(c, false, true) }}>
+                Скрыть категорию
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {teamsForCategory && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}

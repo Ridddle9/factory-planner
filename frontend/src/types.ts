@@ -9,6 +9,7 @@ export interface ProductCategory {
   capacityPerTeamPerDay: number
   workshopId: string
   workshop?: Workshop
+  _count?: { products: number }
 }
 
 export interface ProductTeamCapacity {
