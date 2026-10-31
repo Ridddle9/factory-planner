@@ -79,7 +79,8 @@ export default function Workshops() {
           <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить участок</button>
         </div>
         {(showForm || editing !== null) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div className="form-panel">
+            <h3 className="form-panel-title">{editing ? 'Изменение участка' : 'Новый участок'}</h3>
             <label>Название</label>
             <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Название участка" />
             <div className="form-actions">

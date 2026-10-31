@@ -197,7 +197,8 @@ export default function Teams() {
           <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить бригаду</button>
         </div>
         {(showForm || editing !== null) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div className="form-panel">
+            <h3 className="form-panel-title">{editing ? 'Изменение бригады' : 'Новая бригада'}</h3>
             <label>Название</label>
             <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Бригада №..." />
             <label>Количество людей</label>

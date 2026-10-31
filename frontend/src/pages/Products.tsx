@@ -106,7 +106,8 @@ export default function Products() {
         </div>
 
         {(showForm || editing !== null) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
+          <div className="form-panel">
+            <h3 className="form-panel-title">{editing ? 'Изменение товара' : 'Новый товар'}</h3>
             <label>Код</label>
             <input value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="Код" />
             <label>Название</label>
@@ -119,10 +120,8 @@ export default function Products() {
               ))}
             </select>
             <label>
-              Произв. на 1 человека/день
-              <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6, fontSize: '0.82rem' }}>
-                (оставьте пустым — возьмёт из 1С)
-              </span>
+              Производительность на 1 человека в день
+              <span className="form-hint">Оставьте пустым — возьмётся из 1С</span>
             </label>
             <input
               type="number"

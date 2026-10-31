@@ -127,7 +127,8 @@ export default function Orders() {
         )}
 
         {showForm && tab === 'active' && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div className="form-panel">
+            <h3 className="form-panel-title">Новый заказ</h3>
             <label>Номер заказа *</label>
             <input value={form.orderNumber} onChange={e => setForm(f => ({ ...f, orderNumber: e.target.value }))} placeholder="00ЦБ-001213" />
             <label>Клиент *</label>

@@ -184,7 +184,8 @@ export default function OrderDetail() {
             <button type="button" className="btn btn-secondary" onClick={() => setEditingOrder(true)}>Изменить заказ</button>
           </>
         ) : (
-          <>
+          <div className="form-panel" style={{ marginBottom: 0 }}>
+            <h3 className="form-panel-title">Изменение заказа</h3>
             <label>Номер заказа</label>
             <input value={orderForm.orderNumber} onChange={e => setOrderForm(f => ({ ...f, orderNumber: e.target.value }))} />
             <label>Клиент</label>
@@ -199,7 +200,7 @@ export default function OrderDetail() {
               <button type="button" className="btn btn-primary" onClick={saveOrder} disabled={saving}>Сохранить</button>
               <button type="button" className="btn btn-secondary" onClick={() => setEditingOrder(false)}>Отмена</button>
             </div>
-          </>
+          </div>
         )}
       </div>
       <div className="card">
@@ -225,7 +226,8 @@ export default function OrderDetail() {
           Автоплан: нужны <strong>бригады у категории</strong> (Справочники → Категории → «Бригады»). Перепланирование удаляет старые задачи и заново распределяет позиции с учётом загрузки.
         </p>
         {(showItemForm || editingItem) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div className="form-panel">
+            <h3 className="form-panel-title">{editingItem ? 'Изменение позиции' : 'Новая позиция'}</h3>
             <label>Товар</label>
             <select
               value={editingItem?.productId ?? itemForm.productId}

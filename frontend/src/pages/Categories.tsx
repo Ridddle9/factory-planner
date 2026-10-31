@@ -244,10 +244,11 @@ export default function Categories() {
           </button>
         </div>
         {(showForm || editing !== null) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div className="form-panel">
+            <h3 className="form-panel-title">{editing ? 'Изменение категории' : 'Новая категория'}</h3>
             <label>Название</label>
             <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Категория" />
-            <label>Мощность по умолчанию, ед./день <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.82rem' }}>(фолбэк — если у продукта нет мощности из маршрутизации 1С)</span></label>
+            <label>Мощность по умолчанию, ед./день<span className="form-hint">Используется, если у товара нет мощности из маршрутизации 1С</span></label>
             <input type="number" inputMode="numeric" min={1} value={form.capacityPerTeamPerDay} onChange={e => setForm(f => ({ ...f, capacityPerTeamPerDay: Number(e.target.value) || 1 }))} />
             <label>Участок</label>
             <select value={form.workshopId} onChange={e => setForm(f => ({ ...f, workshopId: e.target.value }))}>

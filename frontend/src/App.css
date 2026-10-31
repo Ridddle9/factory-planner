@@ -398,7 +398,37 @@ tbody tr:hover td {
 }
 
 /* ─── Forms ──────────────────────────────────────────────────── */
-form label {
+/* .form-panel — форма из обычного блока (не <form>): те же поля + рамка-панель */
+.form-panel {
+  max-width: 520px;
+  margin-bottom: 16px;
+  padding: 18px 20px 20px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.form-panel-title {
+  margin: 0 0 14px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.form-panel .form-actions {
+  margin-top: 6px;
+}
+
+.form-hint {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+form label,
+.form-panel label {
   display: block;
   margin-bottom: 5px;
   font-size: 0.8rem;
@@ -409,7 +439,10 @@ form label {
 
 form input,
 form select,
-form textarea {
+form textarea,
+.form-panel input,
+.form-panel select,
+.form-panel textarea {
   width: 100%;
   max-width: 420px;
   padding: 8px 12px;
@@ -426,12 +459,16 @@ form textarea {
 
 form input:focus,
 form select:focus,
-form textarea:focus {
+form textarea:focus,
+.form-panel input:focus,
+.form-panel select:focus,
+.form-panel textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
 }
 
-form textarea {
+form textarea,
+.form-panel textarea {
   min-height: 90px;
   resize: vertical;
 }
