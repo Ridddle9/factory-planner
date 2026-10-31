@@ -520,6 +520,39 @@ async function plannedAheadQty(orderItemId: string, from: Date): Promise<number>
   return agg._sum.plannedQuantity ?? 0;
 }
 
+// Что сдвинулось при ручном переносе: кого вытеснила задача из нового дня (сдвинуты вправо)
+// и кто встал на освободившееся место (подтянуты из следующих дней)
+async function describeCascade(log: CascadeMove[], freedDate: Date, targetDate: Date, movedItemId: string) {
+  const ids = [...new Set(log.map(l => l.orderItemId))];
+  const items = ids.length
+    ? await prisma.orderItem.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, order: { select: { orderNumber: true } }, product: { select: { code: true, name: true } } },
+      })
+    : [];
+  const info = new Map(items.map(i => [i.id, { orderNumber: i.order.orderNumber, product: i.product.name || i.product.code }]));
+  // skipMoved: подтягивание самой переносимой позиции на её же освободившийся день не показываем
+  const group = (entries: CascadeMove[], dateOf: (l: CascadeMove) => Date, skipMoved: boolean) => {
+    const m = new Map<string, { orderNumber: string; product: string; qty: number; date: string }>();
+    for (const l of entries) {
+      if (skipMoved && l.orderItemId === movedItemId) continue;
+      const g = m.get(l.orderItemId) ?? { ...(info.get(l.orderItemId) ?? { orderNumber: "?", product: "" }), qty: 0, date: dateOf(l).toISOString().slice(0, 10) };
+      g.qty += l.qty;
+      m.set(l.orderItemId, g);
+    }
+    return [...m.values()];
+  };
+  return {
+    // Вытеснены из нового дня задачи (первый шаг каскада)
+    pushed: group(log.filter(l => l.dir === "right" && l.from.getTime() === targetDate.getTime()), l => l.to, false),
+    // Встали на освободившийся день
+    pulled: group(log.filter(l => l.dir === "left" && l.to.getTime() === freedDate.getTime()), l => l.from, true),
+    // Всего шагов сдвига по цепочке (сдвиг одного дня тянет следующий)
+    steps: log.length,
+    overload: null as { load: number; capacity: number } | null,
+  };
+}
+
 // Helper: сжать план позиции заказа влево (после ручного переноса на позднюю дату)
 async function compactOrderItem(orderItemId: string): Promise<void> {
   const today = new Date();
@@ -540,7 +573,10 @@ async function compactOrderItem(orderItemId: string): Promise<void> {
 }
 
 // Helper: каскадный сдвиг вправо (после ручного переноса на раннюю дату)
-async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations = 60): Promise<number> {
+// Журнал каскадных сдвигов — чтобы сообщить, что сдвинулось при ручном переносе
+type CascadeMove = { orderItemId: string; from: Date; to: Date; qty: number; dir: "right" | "left" };
+
+async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations = 60, log?: CascadeMove[]): Promise<number> {
   let movedCount = 0;
   const teamHeadcount = (await prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true } }))?.headcount ?? 1;
 
@@ -616,6 +652,7 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
       }
 
       movedCount++;
+      log?.push({ orderItemId: task.orderItemId, from: date, to: nextDay, qty: moveQty, dir: "right" });
       const existing = await prisma.dailyTask.findUnique({
         where: { orderItemId_date: { orderItemId: task.orderItemId, date: nextDay } },
       });
@@ -644,7 +681,7 @@ async function cascadeShiftRight(teamId: string, startDate: Date, maxIterations 
 }
 
 // Helper: каскадный сдвиг влево (после ручного переноса на позднюю дату — подтягивает очередь вперёд)
-async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations = 60): Promise<number> {
+async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations = 60, log?: CascadeMove[]): Promise<number> {
   let movedCount = 0;
   const teamHeadcount = (await prisma.team.findUnique({ where: { id: teamId }, select: { headcount: true } }))?.headcount ?? 1;
 
@@ -731,6 +768,7 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
       }
 
       movedCount++;
+      log?.push({ orderItemId: task.orderItemId, from: nextDay, to: date, qty: pullQty, dir: "left" });
       const existing = await prisma.dailyTask.findUnique({
         where: { orderItemId_date: { orderItemId: task.orderItemId, date } },
       });
@@ -2282,6 +2320,21 @@ app.delete("/order-items/:id", async (req: Request, res: Response) => {
 });
 
 // Получить «к обеспечению» для позиции заказа
+// Бригады, у которых есть норма на товар позиции, и их мощность в день (для окна переноса задачи)
+app.get("/order-items/:id/teams", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const item = await prisma.orderItem.findFirst({
+    where: { id: String(req.params.id), order: { companyId: cid } },
+    select: { productId: true },
+  });
+  if (!item) return res.status(404).json({ error: "Order item not found" });
+  const ptcs = await prisma.productTeamCapacity.findMany({
+    where: { productId: item.productId, companyId: cid, capacityPerDay: { gt: 0 } },
+    select: { capacityPerDay: true, team: { select: { id: true, name: true, headcount: true } } },
+  });
+  res.json(ptcs.map(p => ({ teamId: p.team.id, teamName: p.team.name, perDay: Math.round(p.capacityPerDay * p.team.headcount * 10) / 10 })));
+});
+
 app.get("/order-items/:id/remaining", async (req: Request, res: Response) => {
   const id = req.params.id as string | undefined;
   if (typeof id !== "string") {
@@ -2632,8 +2685,8 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       select: { date: true, teamId: true, orderItemId: true, plannedQuantity: true, actualQuantity: true },
     });
     if (!current) return res.status(404).json({ error: "Daily task not found" });
-    // Старое состояние нужно для логики переноса даты
-    const oldTask = date !== undefined ? current : null;
+    const dateChanged = data.date !== undefined && data.date.getTime() !== current.date.getTime();
+    const teamChanged = data.teamId !== undefined && data.teamId !== current.teamId;
 
     // Реальная правка количества, бригады или даты — ручная: перепланирование её больше не трогает.
     // Снять закрепление — явный manuallyPlaced: false (задача снова отдаётся автопланированию)
@@ -2649,46 +2702,44 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       team: true,
     } as const;
     let task;
-    if (data.date !== undefined && data.date.getTime() !== current.date.getTime() && current.actualQuantity !== null) {
-      // Факт остаётся на своём дне: у задачи с фактом переезжает только план — на новую дату ставится
-      // (или дописывается) плановая задача, а здесь остаётся факт с планом 0
+    const dst = data.date !== undefined && data.date.getTime() !== current.date.getTime()
+      ? await prisma.dailyTask.findUnique({ where: { orderItemId_date: { orderItemId: current.orderItemId, date: data.date } } })
+      : null;
+    if (data.date !== undefined && data.date.getTime() !== current.date.getTime() && (current.actualQuantity !== null || dst)) {
+      // Переезжает только план: на новую дату ставится плановая задача, а если у позиции там уже есть
+      // задача — количество дописывается в неё. Факт остаётся на своём дне (план 0), задача без факта удаляется
       const qty = data.plannedQuantity ?? current.plannedQuantity;
       const teamId = data.teamId !== undefined ? data.teamId : current.teamId;
-      const dst = await prisma.dailyTask.findUnique({ where: { orderItemId_date: { orderItemId: current.orderItemId, date: data.date } } });
+      // Если в этом дне у позиции уже есть автоматическая задача — сливаемся в неё и остаёмся
+      // автоматическими: иначе вся задача станет ручной и каскад не сможет сдвинуть лишнее
       const moved = dst
-        ? await prisma.dailyTask.update({ where: { id: dst.id }, data: { plannedQuantity: dst.plannedQuantity + qty, teamId, manuallyPlaced: true }, include })
+        ? await prisma.dailyTask.update({ where: { id: dst.id }, data: { plannedQuantity: dst.plannedQuantity + qty, teamId, manuallyPlaced: dst.manuallyPlaced }, include })
         : await prisma.dailyTask.create({ data: { orderItemId: current.orderItemId, date: data.date, plannedQuantity: qty, teamId, manuallyPlaced: true }, include });
-      await prisma.dailyTask.update({ where: { id }, data: { plannedQuantity: 0 } });
+      if (current.actualQuantity !== null) await prisma.dailyTask.update({ where: { id }, data: { plannedQuantity: 0 } });
+      else await prisma.dailyTask.delete({ where: { id } });
       task = moved;
     } else {
       task = await prisma.dailyTask.update({ where: { id }, data, include });
     }
 
-    // Auto-compact / cascade when a date change occurred
-    if (oldTask && date !== undefined) {
-      const oldDate = oldTask.date;
-      const newDate = new Date(date);
-      const oldMs = oldDate.getTime();
-      const newMs = newDate.getTime();
-
-      if (newMs > oldMs) {
-        // Task moved later → compact this orderItem, then pull the queue forward into freed capacity
-        const freedTeamId = oldTask.teamId;
-        const freedDate = oldDate;
-        setImmediate(async () => {
-          await compactOrderItem(oldTask.orderItemId);
-          if (freedTeamId) await cascadeShiftLeft(freedTeamId, freedDate);
-        });
-      } else if (newMs < oldMs) {
-        // Task moved earlier → cascade-push excess tasks on the new date rightward
-        const effectiveTeamId = (data.teamId !== undefined ? data.teamId : oldTask.teamId) as string | null;
-        if (effectiveTeamId) {
-          setImmediate(() => cascadeShiftRight(effectiveTeamId, newDate));
-        }
+    // Перенос (другая дата или бригада): в новом дне лишнее сдвигается вправо по очереди бригады,
+    // на освободившееся место подтягивается очередь. Ручные задачи и факт каскады не трогают.
+    // Делаем сразу (не в фоне), чтобы ответить, что сдвинулось и что встало на место задачи.
+    let cascade: Awaited<ReturnType<typeof describeCascade>> | null = null;
+    if (dateChanged || teamChanged) {
+      const log: CascadeMove[] = [];
+      if (task.teamId) await cascadeShiftRight(task.teamId, task.date, 60, log);
+      if (dateChanged && task.date.getTime() > current.date.getTime()) await compactOrderItem(current.orderItemId);
+      if (current.teamId) await cascadeShiftLeft(current.teamId, current.date, 60, log);
+      cascade = await describeCascade(log, current.date, task.date, current.orderItemId);
+      // День всё ещё перегружен — значит, там только ручные задачи (их каскад не двигает): сообщаем
+      if (task.teamId) {
+        const after = await calculateTeamLoad(task.teamId, task.date);
+        const cap = (await prisma.teamDayCapacity.findUnique({ where: { teamId_date: { teamId: task.teamId, date: task.date } } }))?.factor ?? 1;
+        if (after > cap + 0.005) cascade = { ...cascade, overload: { load: Math.round(after * 100), capacity: Math.round(cap * 100) } };
       }
     }
-
-    res.json({ ...task, autoAdjust: oldTask && date !== undefined && new Date(date).getTime() !== oldTask.date.getTime() });
+    res.json({ ...task, autoAdjust: dateChanged || teamChanged, cascade });
   } catch (err: any) {
     if (err.code === "P2002") {
       res.status(409).json({ error: "Task for this order item and date already exists" });

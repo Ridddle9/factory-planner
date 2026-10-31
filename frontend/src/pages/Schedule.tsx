@@ -74,7 +74,6 @@ type PopupState = {
   cell: CellData | null
 }
 
-type Mode = 'idle' | 'moving'
 
 // load, effectiveCapacity, available — в долях бригадо-дня (0.0–1.0+)
 type TeamLoad = { load: number; effectiveCapacity: number; available: number }
@@ -108,7 +107,6 @@ export default function Schedule() {
   const [saving, setSaving] = useState(false)
 
   const [popup, setPopup] = useState<PopupState | null>(null)
-  const [mode, setMode] = useState<Mode>('idle')
 
   // Телефон: вид «День» (список задач дня) или «Таблица» (сетка), действия спрятаны под кнопку
   const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches)
@@ -121,12 +119,17 @@ export default function Schedule() {
   const [mobileView, setMobileView] = useState<'day' | 'grid'>('day')
   const [mobileDate, setMobileDate] = useState(today)
   const [showActions, setShowActions] = useState(false)
-  const [moveDate, setMoveDate] = useState<string | null>(null)
-  const [modeSource, setModeSource] = useState<{ rowId: string; date: string; cell: CellData } | null>(null)
+  // Окно «Перенос задачи»: дата и бригада вводятся, а не выбираются кликом по клетке
+  type MoveDialog = { taskId: string; rowId: string; fromDate: string; fromTeamId: string | null; qty: number; manual: boolean; date: string; teamId: string }
+  const [moveDialog, setMoveDialog] = useState<MoveDialog | null>(null)
+  const [moveTeams, setMoveTeams] = useState<{ teamId: string; teamName: string; perDay: number }[]>([])
+  const [moveTargetLoad, setMoveTargetLoad] = useState<TeamLoad | null>(null)
+  // Итог переноса: что сдвинулось вправо и что встало на освободившееся место
+  type CascadeItem = { orderNumber: string; product: string; qty: number; date: string }
+  type Cascade = { pushed: CascadeItem[]; pulled: CascadeItem[]; steps: number; overload: { load: number; capacity: number } | null }
+  type MoveResult = Cascade & { title: string; freedDate: string; targetDate: string }
+  const [moveResult, setMoveResult] = useState<MoveResult | null>(null)
 
-  // Move warning dialog
-  type MoveWarning = { taskId: string; toDate: string; teamName: string; overflowQty: number }
-  const [moveWarning, setMoveWarning] = useState<MoveWarning | null>(null)
 
   // Undo
   type UndoAction = { label: string; fn: () => Promise<void> }
@@ -411,26 +414,10 @@ export default function Schedule() {
 
   const closePopup = () => {
     setPopup(null)
-    setMoveDate(null)
-    if (mode !== 'idle') {
-      setMode('idle')
-      setModeSource(null)
-    }
   }
 
   const openPopup = (e: React.MouseEvent, row: RowData, date: string, cell: CellData | null) => {
     e.stopPropagation()
-
-    // Moving mode: clicking target cell
-    if (mode === 'moving' && modeSource) {
-      if (modeSource.rowId !== row.orderItemId) return // different item, ignore
-      if (cell) {
-        setError('Эта дата уже занята для данной позиции')
-        return
-      }
-      handleMove(modeSource.cell.taskId, modeSource.date, date)
-      return
-    }
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     setEditQty(cell?.plannedQuantity ?? 0)
@@ -439,7 +426,6 @@ export default function Schedule() {
     setSplitQty2(cell ? Math.floor(cell.plannedQuantity / 2) : 0)
     setSplitDate2(todayISO())
     setSplitLoad(null)
-    setMoveDate(null)
     setPopup({
       rowId: row.orderItemId,
       date,
@@ -518,55 +504,49 @@ export default function Schedule() {
     loadPlan()
   }
 
-  const startMove = () => {
+  // «Перенести» в окне задачи — открывает окно переноса с текущей датой и бригадой
+  const startMove = async () => {
     if (!popup?.cell) return
-    if (isMobile && mobileView === 'day') {
-      setMoveDate(moveDate === null ? popup.date : null)
-      return
-    }
-    setModeSource({ rowId: popup.rowId, date: popup.date, cell: popup.cell })
-    setMode('moving')
+    const c = popup.cell
+    setMoveDialog({ taskId: c.taskId, rowId: popup.rowId, fromDate: popup.date, fromTeamId: c.teamId, qty: c.plannedQuantity, manual: c.manual, date: popup.date, teamId: c.teamId ?? '' })
+    setMoveTargetLoad(null)
     setPopup(null)
+    const { data } = await api.get<{ teamId: string; teamName: string; perDay: number }[]>(`/order-items/${popup.rowId}/teams`)
+    setMoveTeams(data ?? [])
   }
 
-  // Перенос на дату, выбранную в окне задачи (телефон, вид «День»)
-  const confirmMobileMove = () => {
-    if (!popup?.cell || !moveDate || moveDate === popup.date) return
-    const row = rows.find(r => r.orderItemId === popup.rowId)
-    if (row?.cells[moveDate]) { setError('Эта дата уже занята для данной позиции'); return }
-    const source = { rowId: popup.rowId, date: popup.date, cell: popup.cell }
-    setModeSource(source)
-    setPopup(null)
-    setMoveDate(null)
-    handleMove(source.cell.taskId, source.date, moveDate, false, source)
+  // Загрузка выбранной бригады в выбранный день — чтобы было видно, хватит ли места
+  useEffect(() => {
+    if (!moveDialog?.teamId || !moveDialog.date) { setMoveTargetLoad(null); return }
+    let cancelled = false
+    api.get<TeamLoad>(`/teams/${moveDialog.teamId}/load?date=${moveDialog.date}`).then(({ data }) => { if (!cancelled) setMoveTargetLoad(data ?? null) })
+    return () => { cancelled = true }
+  }, [moveDialog?.teamId, moveDialog?.date])
+
+  const showCascade = (title: string, cascade: Cascade | null | undefined, freedDate: string, targetDate: string) => {
+    setMoveResult({ title, pushed: cascade?.pushed ?? [], pulled: cascade?.pulled ?? [], steps: cascade?.steps ?? 0, overload: cascade?.overload ?? null, freedDate, targetDate })
   }
 
-  const handleMove = async (taskId: string, fromDate: string, toDate: string, force = false, source = modeSource) => {
-    // Check target date capacity before moving
-    if (!force && source?.cell.teamId) {
-      const teamId = source.cell.teamId
-      const movedQty = source.cell.plannedQuantity
-      const cap = allOrderItems.find(o => o.id === source.rowId)?.product?.category?.capacityPerTeamPerDay
-      const { data: loadData } = await api.get<TeamLoad>(`/teams/${teamId}/load?date=${toDate}`)
-      if (loadData && cap && cap > 0) {
-        const overflow = Math.round((loadData.load + movedQty / cap - 1) * cap)
-        if (overflow > 0) {
-          const row = rows.find(r => r.orderItemId === source.rowId)
-          setMoveWarning({ taskId, toDate, teamName: row?.teamName ?? 'Бригада', overflowQty: overflow })
-          return
-        }
-      }
-    }
-
+  const submitMove = async () => {
+    if (!moveDialog) return
+    const d = moveDialog
+    if (d.date === d.fromDate && (d.teamId || null) === d.fromTeamId) { setMoveDialog(null); return }
     setSaving(true)
-    await api.put(`/daily-tasks/${taskId}`, { date: new Date(toDate).toISOString() })
+    const body: Record<string, unknown> = {}
+    if (d.date !== d.fromDate) body.date = new Date(d.date).toISOString()
+    if ((d.teamId || null) !== d.fromTeamId) body.teamId = d.teamId || null
+    const { data, error: e } = await api.put<{ id: string; cascade: Cascade | null }>(`/daily-tasks/${d.taskId}`, body)
     setSaving(false)
-    setMode('idle')
-    setModeSource(null)
-    setMoveWarning(null)
+    if (e) { setError(e); return }
+    setMoveDialog(null)
+    const teamName = (id: string | null) => teams.find(t => t.id === id)?.name ?? 'без бригады'
+    const row = rows.find(r => r.orderItemId === d.rowId)
+    const where = [d.date !== d.fromDate ? `на ${formatDateShort(d.date)}` : '', (d.teamId || null) !== d.fromTeamId ? `в ${teamName(d.teamId || null)}` : ''].filter(Boolean).join(' ')
+    showCascade(`${row?.orderNumber ?? ''} · ${d.qty} шт перенесены ${where}`, data?.cascade, d.fromDate, d.date)
+    const movedId = data?.id ?? d.taskId
     setUndoAction({
-      label: `Вернуть на ${fromDate}`,
-      fn: async () => { await api.put(`/daily-tasks/${taskId}`, { date: new Date(fromDate).toISOString(), manuallyPlaced: source?.cell?.manual ?? false }) },
+      label: `Вернуть на ${formatDateShort(d.fromDate)}`,
+      fn: async () => { await api.put(`/daily-tasks/${movedId}`, { date: new Date(d.fromDate).toISOString(), teamId: d.fromTeamId, manuallyPlaced: d.manual }) },
     })
     loadPlan()
   }
@@ -636,7 +616,6 @@ export default function Schedule() {
     return Math.min(100, Math.round((load.planned / load.capacity) * 100))
   }
 
-  const cursorStyle = mode !== 'idle' ? 'crosshair' : undefined
 
   return (
     <>
@@ -778,35 +757,6 @@ export default function Schedule() {
         </div>
       )}
 
-      {/* Move warning dialog */}
-      {moveWarning && (
-        <div style={{ marginBottom: 10, padding: '10px 14px', borderRadius: 8, fontSize: '0.83rem',
-          background: '#fef2f2', border: '1px solid #fca5a5', color: '#dc2626' }}>
-          <div style={{ marginBottom: 8 }}>
-            <strong>{moveWarning.teamName}</strong> перегружена на <strong>{moveWarning.toDate}</strong>.
-            Чтобы перенести, освободи <strong>{moveWarning.overflowQty} шт.</strong> вручную.
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-danger btn-sm"
-              onClick={() => handleMove(moveWarning.taskId, modeSource!.date, moveWarning.toDate, true)}>
-              Перенести всё равно
-            </button>
-            <button className="btn btn-secondary btn-sm" onClick={() => setMoveWarning(null)}>
-              Отмена
-            </button>
-          </div>
-        </div>
-      )}
-
-      {mode !== 'idle' && (
-        <div style={{ background: '#fef9c3', border: '1px solid #fde047', borderRadius: 8, padding: '0.5rem 1rem', marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
-          <span>
-            {`Переносим «${modeSource?.cell.plannedQuantity} шт» — кликните на пустую ячейку той же позиции`}
-          </span>
-          <button className="btn btn-secondary btn-sm" onClick={() => { setMode('idle'); setModeSource(null) }}>Отмена</button>
-        </div>
-      )}
-
       <div className="card">
         <div className="toolbar schedule-filters">
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -928,7 +878,7 @@ export default function Schedule() {
             })()}
           </>
         ) : (
-          <div className="schedule-grid-scroll" style={{ cursor: cursorStyle }} onScroll={() => setTip(null)}>
+          <div className="schedule-grid-scroll" onScroll={() => setTip(null)}>
             <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.8rem', tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: stickyW[0] }} />
@@ -1040,8 +990,6 @@ export default function Schedule() {
                         {dates.map(d => {
                           const cell = row.cells[d]
                           const bg = cellBg(cell, d)
-                          const isSource = modeSource?.rowId === row.orderItemId && modeSource?.date === d
-                          const isValidTarget = mode === 'moving' && modeSource?.rowId === row.orderItemId && !cell && !isSource
                           return (
                             <td
                               key={d}
@@ -1050,15 +998,13 @@ export default function Schedule() {
                                 textAlign: 'center', padding: '3px 2px',
                                 borderRight: '1px solid #e2e8f0',
                                 // Нерабочий день — серый на всю высоту (задача в нём, если есть, остаётся своего цвета)
-                                background: isSource ? '#fef08a' : bg !== 'transparent' ? bg : isOffDay(d) ? '#e2e8f0' : bg,
+                                background: bg !== 'transparent' ? bg : isOffDay(d) ? '#e2e8f0' : bg,
                                 transition: 'background 0.15s',
-                                cursor: mode === 'idle' ? 'pointer' : (isValidTarget ? 'crosshair' : 'default'),
-                                outline: isValidTarget ? '2px dashed #60a5fa' : 'none',
-                                outlineOffset: -2,
+                                cursor: 'pointer',
                               }}
                               {...(cell
                                 ? tipProps(`${row.productName || row.productCode}\nПлан: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, факт: ${cell.actualQuantity}` : ''}${cell.manual ? '\nРучная правка — перепланирование не трогает' : ''}${cell.comment ? `\n${cell.comment}` : ''}`)
-                                : isValidTarget ? tipProps('Кликните, чтобы перенести сюда') : {})}
+                                : {})}
                             >
                               {cell && cell.plannedQuantity > 0 && (
                                 <>
@@ -1067,9 +1013,6 @@ export default function Schedule() {
                                     <div style={{ fontSize: '0.68rem', color: '#374151', lineHeight: 1 }}>✓{cell.actualQuantity}</div>
                                   )}
                                 </>
-                              )}
-                              {isValidTarget && !cell && (
-                                <div style={{ fontSize: '0.7rem', color: '#93c5fd', lineHeight: 1 }}>+</div>
                               )}
                             </td>
                           )
@@ -1093,6 +1036,96 @@ export default function Schedule() {
       </div>
 
       {/* Header load tooltip */}
+      {/* Перенос задачи: дата и бригада */}
+      {moveDialog && (() => {
+        const d = moveDialog
+        const row = rows.find(r => r.orderItemId === d.rowId)
+        const norm = moveTeams.find(t => t.teamId === d.teamId)
+        const share = norm && norm.perDay > 0 ? d.qty / norm.perDay : null
+        // Если бригада и день не меняются, задача сама занимает место в этом дне — не считаем её дважды
+        const sameSlot = d.date === d.fromDate && (d.teamId || null) === d.fromTeamId
+        const free = moveTargetLoad ? moveTargetLoad.effectiveCapacity - moveTargetLoad.load : null
+        const otherTeams = teams.filter(t => !moveTeams.some(m => m.teamId === t.id))
+        return (
+          <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setMoveDialog(null) }}>
+            <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="move-title">
+              <h3 id="move-title" className="form-panel-title">Перенос задачи</h3>
+              <div className="move-summary">
+                <strong>{row?.orderNumber}</strong> · {row?.productName || row?.productCode}
+                <div>{d.qty} шт · сейчас {formatDateShort(d.fromDate)}, {teams.find(t => t.id === d.fromTeamId)?.name ?? 'без бригады'}</div>
+              </div>
+              <div className="form-panel" style={{ maxWidth: 'none', margin: 0, padding: 0, border: 'none', background: 'none' }}>
+                <label>Дата</label>
+                <input type="date" value={d.date} onChange={e => e.target.value && setMoveDialog({ ...d, date: e.target.value })} autoFocus={!isMobile} />
+                <label>Бригада</label>
+                <select value={d.teamId} onChange={e => setMoveDialog({ ...d, teamId: e.target.value })}>
+                  {moveTeams.length > 0 && (
+                    <optgroup label="С нормой на этот товар">
+                      {moveTeams.map(t => <option key={t.teamId} value={t.teamId}>{t.teamName} — {t.perDay} шт/день</option>)}
+                    </optgroup>
+                  )}
+                  <optgroup label={moveTeams.length > 0 ? 'Без нормы на этот товар' : 'Бригады'}>
+                    {otherTeams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </optgroup>
+                </select>
+              </div>
+              {isOffDay(d.date) && <div className="move-note move-note-warn">Это нерабочий день — планировщик в него не планирует.</div>}
+              {moveTargetLoad && !sameSlot && free !== null && (
+                <div className={share !== null && share > free + 0.005 ? 'move-note move-note-warn' : 'move-note'}>
+                  У бригады в этот день занято {Math.round(moveTargetLoad.load * 100)}% из {Math.round(moveTargetLoad.effectiveCapacity * 100)}%
+                  {share !== null && <> · задача займёт {Math.round(share * 100)}%</>}.
+                  {share !== null && share > free + 0.005 && <> Не поместившееся сдвинется на следующие дни этой бригады.</>}
+                  {!norm && d.teamId && <> У бригады нет нормы на этот товар.</>}
+                </div>
+              )}
+              <div className="form-actions">
+                <button type="button" className="btn btn-primary" onClick={submitMove} disabled={saving || !d.date}>{saving ? 'Переносим…' : 'Перенести'}</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setMoveDialog(null)}>Отмена</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Итог переноса */}
+      {moveResult && (
+        <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setMoveResult(null) }}>
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="move-result-title">
+            <h3 id="move-result-title" className="form-panel-title">Задача перенесена</h3>
+            <p style={{ margin: '0 0 12px' }}>{moveResult.title}.</p>
+            {moveResult.pushed.length > 0 && (
+              <div className="move-block">
+                <div className="move-block-title">Не поместились {formatDateShort(moveResult.targetDate)} — сдвинуты вправо</div>
+                <ul>{moveResult.pushed.map((p, i) => <li key={i}><strong>{p.orderNumber}</strong> · {p.product} — {p.qty} шт на {formatDateShort(p.date)}</li>)}</ul>
+              </div>
+            )}
+            {moveResult.pulled.length > 0 && (
+              <div className="move-block">
+                <div className="move-block-title">На освободившееся место {formatDateShort(moveResult.freedDate)} встали</div>
+                <ul>{moveResult.pulled.map((p, i) => <li key={i}><strong>{p.orderNumber}</strong> · {p.product} — {p.qty} шт (были на {formatDateShort(p.date)})</li>)}</ul>
+              </div>
+            )}
+            {moveResult.overload && (
+              <div className="move-note move-note-warn" style={{ marginBottom: 12 }}>
+                {formatDateShort(moveResult.targetDate)} бригада всё ещё загружена на {moveResult.overload.load}% из {moveResult.overload.capacity}%:
+                в этот день стоят ручные задачи, их автоматика не сдвигает. Перенесите лишнее вручную.
+              </div>
+            )}
+            {moveResult.pushed.length === 0 && moveResult.pulled.length === 0 && !moveResult.overload && (
+              <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)' }}>Места хватило — другие задачи не сдвигались.</p>
+            )}
+            {moveResult.steps > moveResult.pushed.length + moveResult.pulled.length && (
+              <p style={{ margin: '0 0 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Очередь бригады пересчитана дальше по дням (сдвигов всего: {moveResult.steps}).
+              </p>
+            )}
+            <div className="form-actions">
+              <button type="button" className="btn btn-primary" onClick={() => setMoveResult(null)} autoFocus>Понятно</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {tip && (
         <div className="grid-tip" style={{
           left: Math.min(tip.x + 14, window.innerWidth - 380),
@@ -1184,29 +1217,18 @@ export default function Schedule() {
                   <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>✓{popup.cell.actualQuantity}</span>
                 )}
               </div>
-              <div style={{ marginBottom: '0.75rem' }}>
-                <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Бригада</label>
-                <select value={editTeamId} onChange={e => setEditTeamId(e.target.value)} style={{ width: '100%' }}>
-                  <option value="">— не назначена —</option>
-                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
+              {/* Бригада меняется через «Перенести…» — там же видно её загрузку и что сдвинется */}
+              <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                Бригада: <strong style={{ color: 'var(--text)' }}>{popup.cell.teamName ?? 'не назначена'}</strong>
               </div>
               {!showSplitForm ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                   <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleCreateOrUpdate} disabled={saving}>
                     Сохранить
                   </button>
-                  {moveDate !== null && (
-                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                      <input type="date" value={moveDate} onChange={e => setMoveDate(e.target.value)} style={{ flex: 1, minWidth: 0 }} aria-label="Перенести на дату" />
-                      <button className="btn btn-primary" onClick={confirmMobileMove} disabled={saving || !moveDate || moveDate === popup.date}>
-                        Перенести
-                      </button>
-                    </div>
-                  )}
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
                     <button className="btn btn-secondary" style={{ flex: 1 }} onClick={startMove}>
-                      {moveDate !== null ? 'Отмена' : 'Перенести →'}
+                      Перенести…
                     </button>
                     <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowSplitForm(true)}>
                       Разбить ÷
