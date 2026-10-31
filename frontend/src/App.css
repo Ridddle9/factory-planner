@@ -885,6 +885,37 @@ input[type="checkbox"] {
   color: var(--text-secondary);
 }
 
+/* ─── Мощности бригад по дням ────────────────────────────────── */
+.cap-cell {
+  padding: 3px 2px;
+  height: 34px;
+  text-align: center;
+  border-right: 1px solid #e2e8f0;
+}
+
+/* Клетки, которые сейчас меняются в форме */
+.cap-cell-selected {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  background: var(--primary-light) !important;
+}
+
+.cap-result {
+  max-width: 640px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid #bbf7d0;
+  background: var(--success-light);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.cap-result-warn {
+  border-color: #fde68a;
+  background: var(--warning-light);
+}
+
 /* ─── Чат-помощник ───────────────────────────────────────────── */
 .chat {
   display: flex;

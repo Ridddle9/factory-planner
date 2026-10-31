@@ -2851,6 +2851,9 @@ app.get("/daily-tasks/:id/move-suggestions", async (req: Request, res: Response)
 
 // --- Корректировка мощностей бригад по дням ---
 
+// Мощность бригады на день в долях: 1 = 100%. Больше 1 — бригада успевает больше (сверхурочные, усиление)
+const MAX_DAY_FACTOR = 5;
+
 app.get("/team-day-capacity", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const dateStr = req.query.date as string | undefined;
@@ -2877,7 +2880,7 @@ app.post("/team-day-capacity", async (req: Request, res: Response) => {
 
   if (!teamId || typeof teamId !== "string") return res.status(400).json({ error: "teamId is required" });
   if (!date) return res.status(400).json({ error: "date is required" });
-  if (typeof factor !== "number" || factor < 0 || factor > 1) return res.status(400).json({ error: "factor must be a number between 0 and 1" });
+  if (typeof factor !== "number" || factor < 0 || factor > MAX_DAY_FACTOR) return res.status(400).json({ error: `Мощность — от 0 до ${MAX_DAY_FACTOR * 100}%` });
 
   const dayDate = new Date(date);
   if (isNaN(dayDate.getTime())) return res.status(400).json({ error: "Invalid date" });
@@ -2896,6 +2899,44 @@ app.post("/team-day-capacity", async (req: Request, res: Response) => {
   } catch {
     res.status(400).json({ error: "Failed to save team day capacity" });
   }
+});
+
+// Корректировка мощности на период: раскладывается на рабочие дни (в выходные и праздники планировщик
+// не планирует). 100% без причины — сброс: корректировки в периоде удаляются.
+app.post("/team-day-capacity/range", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const { teamId, dateFrom, dateTo, factor, note } = req.body;
+
+  if (!teamId || typeof teamId !== "string") return res.status(400).json({ error: "teamId is required" });
+  if (typeof factor !== "number" || factor < 0 || factor > MAX_DAY_FACTOR) return res.status(400).json({ error: `Мощность — от 0 до ${MAX_DAY_FACTOR * 100}%` });
+  const from = new Date(String(dateFrom ?? "") + "T00:00:00.000Z");
+  const to = new Date(String(dateTo ?? dateFrom ?? "") + "T00:00:00.000Z");
+  if (isNaN(from.getTime()) || isNaN(to.getTime())) return res.status(400).json({ error: "Даты нужны в формате YYYY-MM-DD" });
+  if (to < from) return res.status(400).json({ error: "Дата «по» раньше даты «с»" });
+  if ((to.getTime() - from.getTime()) / 86400000 > 366) return res.status(400).json({ error: "Период — не больше года" });
+
+  const teamOwned = await prisma.team.findFirst({ where: { id: teamId, companyId: cid } });
+  if (!teamOwned) return res.status(404).json({ error: "Team not found" });
+
+  const noteText = typeof note === "string" && note.trim() ? note.trim() : null;
+  const days: Date[] = [];
+  for (const d = new Date(from); d <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (isWorkingDay(new Date(d))) days.push(new Date(d));
+  }
+
+  if (factor === 1 && !noteText) {
+    const { count } = await prisma.teamDayCapacity.deleteMany({ where: { teamId, date: { gte: from, lte: to } } });
+    res.json({ saved: 0, removed: count, days: days.length });
+    return;
+  }
+  for (const date of days) {
+    await prisma.teamDayCapacity.upsert({
+      where: { teamId_date: { teamId, date } },
+      update: { factor, note: noteText },
+      create: { teamId, date, factor, note: noteText },
+    });
+  }
+  res.json({ saved: days.length, removed: 0, days: days.length });
 });
 
 app.delete("/team-day-capacity/:id", async (req: Request, res: Response) => {
