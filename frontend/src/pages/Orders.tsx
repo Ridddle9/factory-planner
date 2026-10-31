@@ -25,6 +25,7 @@ export default function Orders() {
     paymentTerms: '',
   })
   const [saving, setSaving] = useState(false)
+  const [search, setSearch] = useState('')
 
   const load = async () => {
     setLoading(true)
@@ -91,7 +92,16 @@ export default function Orders() {
 
   const active = list.filter(o => !isDone(o.id))
   const archive = list.filter(o => isDone(o.id))
-  const shown = tab === 'active' ? active : archive
+  const tabList = tab === 'active' ? active : archive
+
+  // Поиск: номер заказа (можно часть — «7988»), клиент, менеджер, код или название товара в заказе
+  const norm = (v: string | null | undefined) => (v ?? '').toLowerCase().replace(/ё/g, 'е')
+  const q = norm(search.trim())
+  const shown = q
+    ? tabList.filter(o =>
+        norm(o.orderNumber).includes(q) || norm(o.customer).includes(q) || norm(o.manager).includes(q) ||
+        (o.items ?? []).some(i => norm(i.product?.code).includes(q) || norm(i.product?.name).includes(q)))
+    : tabList
 
   const tabStyle = (t: Tab): React.CSSProperties => ({
     padding: '6px 18px',
@@ -122,11 +132,18 @@ export default function Orders() {
           </button>
         </div>
 
-        {tab === 'active' && (
-          <div className="toolbar" style={{ marginBottom: '1rem' }}>
-            <button type="button" className="btn btn-primary" onClick={openCreate}>Создать заказ</button>
-          </div>
-        )}
+        <div className="toolbar" style={{ marginBottom: q ? 16 : '1rem' }}>
+          {tab === 'active' && <button type="button" className="btn btn-primary" onClick={openCreate}>Создать заказ</button>}
+          <input
+            className="toolbar-search toolbar-field"
+            type="search"
+            placeholder="Поиск: номер, клиент, менеджер, товар"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          {search && <button type="button" className="btn btn-secondary" onClick={() => setSearch('')}>Сбросить</button>}
+        </div>
+        {q && <div className="toolbar-summary">Найдено {shown.length} из {tabList.length}</div>}
 
         {showForm && tab === 'active' && (
           <div className="form-panel" ref={formRef}>
@@ -150,7 +167,7 @@ export default function Orders() {
 
         {shown.length === 0 ? (
           <div className="empty">
-            {tab === 'active' ? 'Нет актуальных заказов.' : 'Нет архивных заказов.'}
+            {q ? 'Ничего не найдено.' : tab === 'active' ? 'Нет актуальных заказов.' : 'Нет архивных заказов.'}
           </div>
         ) : (
           <table className="stack sticky-head">
