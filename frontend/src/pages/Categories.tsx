@@ -306,8 +306,11 @@ export default function Categories() {
             <p style={{ margin: '0 0 0.6rem', lineHeight: 1.5 }}>
               В категории «{cantDelete.name}» {productsLabel(cantDelete._count?.products ?? 0)}. Удалить категорию можно только после того, как удалены все товары внутри неё.
             </p>
-            <p style={{ margin: '0 0 1.25rem', lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+            <p style={{ margin: '0 0 0.6rem', lineHeight: 1.5, color: 'var(--text-secondary)' }}>
               Вместо удаления категорию можно скрыть: она пропадёт из всех разделов, а синк из 1С и планирование по ней продолжатся. Вернуть её можно на вкладке «Скрытые».
+            </p>
+            <p style={{ margin: '0 0 1.25rem', lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+              Если товары этой категории приходят синком из 1С, лучше скрыть её, чем удалять: после удаления следующий синк создаст категорию и товары заново.
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button type="button" className="btn btn-secondary" onClick={() => setCantDelete(null)}>Отмена</button>
