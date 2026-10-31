@@ -215,7 +215,7 @@ export default function Categories() {
               <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 10 }}>
                 Скрытые категории не видны в приложении, но синк из 1С и планирование по ним продолжаются.
               </div>
-              <table className="stack">
+              <table className="stack sticky-head">
                 <thead>
                   <tr>
                     <th>Название</th>
@@ -265,7 +265,7 @@ export default function Categories() {
         {list.length === 0 ? (
           <div className="empty">Нет категорий. Сначала добавьте участки.</div>
         ) : (
-          <table className="stack">
+          <table className="stack sticky-head">
             <thead>
               <tr>
                 <th>Название</th>

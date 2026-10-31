@@ -176,7 +176,9 @@ body {
 .main {
   flex: 1;
   padding: 28px 32px;
-  overflow: auto;
+  /* Не контейнер прокрутки: страница прокручивается окном, поэтому закреплённые шапки таблиц
+     (sticky) держатся у верха окна. Широкие таблицы прокручиваются в своих обёртках */
+  overflow-x: clip;
   min-width: 0;
 }
 
@@ -208,7 +210,8 @@ body {
   border: 1px solid var(--border);
   padding: 20px;
   margin-bottom: 16px;
-  overflow: hidden;
+  /* clip, а не hidden: hidden делает карточку контейнером прокрутки и ломает закреплённые шапки таблиц */
+  overflow: clip;
 }
 
 
@@ -240,6 +243,16 @@ table {
 
 thead {
   background: #F8FAFC;
+}
+
+/* Закреплённая шапка таблицы: остаётся вверху при прокрутке страницы */
+table.sticky-head th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #F8FAFC;
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
 th {
