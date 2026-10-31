@@ -2585,7 +2585,7 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
   try {
     const current = await prisma.dailyTask.findUnique({
       where: { id },
-      select: { date: true, teamId: true, orderItemId: true, plannedQuantity: true },
+      select: { date: true, teamId: true, orderItemId: true, plannedQuantity: true, actualQuantity: true },
     });
     if (!current) return res.status(404).json({ error: "Daily task not found" });
     // Старое состояние нужно для логики переноса даты
@@ -2600,19 +2600,25 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
     if (changed) data.manuallyPlaced = true;
     if (typeof manuallyPlaced === "boolean") data.manuallyPlaced = manuallyPlaced;
 
-    const task = await prisma.dailyTask.update({
-      where: { id },
-      data,
-      include: {
-        orderItem: {
-          include: {
-            order: true,
-            product: { include: { category: true } },
-          },
-        },
-        team: true,
-      },
-    });
+    const include = {
+      orderItem: { include: { order: true, product: { include: { category: true } } } },
+      team: true,
+    } as const;
+    let task;
+    if (data.date !== undefined && data.date.getTime() !== current.date.getTime() && current.actualQuantity !== null) {
+      // Факт остаётся на своём дне: у задачи с фактом переезжает только план — на новую дату ставится
+      // (или дописывается) плановая задача, а здесь остаётся факт с планом 0
+      const qty = data.plannedQuantity ?? current.plannedQuantity;
+      const teamId = data.teamId !== undefined ? data.teamId : current.teamId;
+      const dst = await prisma.dailyTask.findUnique({ where: { orderItemId_date: { orderItemId: current.orderItemId, date: data.date } } });
+      const moved = dst
+        ? await prisma.dailyTask.update({ where: { id: dst.id }, data: { plannedQuantity: dst.plannedQuantity + qty, teamId, manuallyPlaced: true }, include })
+        : await prisma.dailyTask.create({ data: { orderItemId: current.orderItemId, date: data.date, plannedQuantity: qty, teamId, manuallyPlaced: true }, include });
+      await prisma.dailyTask.update({ where: { id }, data: { plannedQuantity: 0 } });
+      task = moved;
+    } else {
+      task = await prisma.dailyTask.update({ where: { id }, data, include });
+    }
 
     // Auto-compact / cascade when a date change occurred
     if (oldTask && date !== undefined) {
@@ -2653,24 +2659,25 @@ app.delete("/daily-tasks/:id", async (req: Request, res: Response) => {
   if (typeof id !== "string") return res.status(400).json({ error: "Invalid id" });
 
   try {
-    await prisma.dailyTask.delete({ where: { id } });
+    // Факт не удаляем никогда: у задачи с фактом убирается только план
+    const task = await prisma.dailyTask.findUniqueOrThrow({ where: { id }, select: { actualQuantity: true } });
+    if (task.actualQuantity !== null) await prisma.dailyTask.update({ where: { id }, data: { plannedQuantity: 0 } });
+    else await prisma.dailyTask.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {
     res.status(404).json({ error: "Daily task not found" });
   }
 });
 
-// --- Очистить весь график (только плановые задачи) ---
+// --- Очистить весь график (только план; факт остаётся) ---
 
 app.delete("/daily-tasks", requireAuth, async (req: Request, res: Response) => {
   const companyId = (req as any).user.companyId;
-  const { count } = await prisma.dailyTask.deleteMany({
-    where: {
-      plannedQuantity: { gt: 0 },
-      orderItem: { order: { companyId } },
-    },
-  });
-  res.json({ deleted: count });
+  const scope = { plannedQuantity: { gt: 0 }, orderItem: { order: { companyId } } };
+  // Задачи без факта удаляем, у задач с фактом обнуляем план — факт не трогаем никогда
+  const { count } = await prisma.dailyTask.deleteMany({ where: { ...scope, actualQuantity: null } });
+  const kept = await prisma.dailyTask.updateMany({ where: { ...scope, actualQuantity: { not: null } }, data: { plannedQuantity: 0 } });
+  res.json({ deleted: count, keptFact: kept.count });
 });
 
 // --- Разбить задачу на две части ---
