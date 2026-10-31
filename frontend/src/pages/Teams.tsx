@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { useScrollToForm } from '../useScrollToForm'
 import type { Team, TeamDayCapacity } from '../types'
 
 function todayISO() {
@@ -23,6 +24,7 @@ export default function Teams() {
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Team | null>(null)
+  const formRef = useScrollToForm(editing?.id ?? (showForm ? 'new' : null))
   const [formName, setFormName] = useState('')
   const [formHeadcount, setFormHeadcount] = useState(1)
   const [saving, setSaving] = useState(false)
@@ -197,7 +199,7 @@ export default function Teams() {
           <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить бригаду</button>
         </div>
         {(showForm || editing !== null) && (
-          <div className="form-panel">
+          <div className="form-panel" ref={formRef}>
             <h3 className="form-panel-title">{editing ? 'Изменение бригады' : 'Новая бригада'}</h3>
             <label>Название</label>
             <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Бригада №..." />

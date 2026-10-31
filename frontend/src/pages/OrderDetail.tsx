@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
+import { useScrollToForm } from '../useScrollToForm'
 import type { Order, OrderItem, Product } from '../types'
 
 // Дата передачи строки (или заказа, пока 1С не шлёт её по строкам) в виде ДД.ММ.ГГГГ
@@ -20,6 +21,8 @@ export default function OrderDetail() {
   const [itemForm, setItemForm] = useState({ productId: '', quantity: 1 })
   const [showItemForm, setShowItemForm] = useState(false)
   const [editingItem, setEditingItem] = useState<OrderItem | null>(null)
+  const itemFormRef = useScrollToForm(editingItem?.id ?? (showItemForm ? 'new' : null))
+  const orderFormRef = useScrollToForm(editingOrder ? 'order' : null)
   const [saving, setSaving] = useState(false)
 
   const load = async () => {
@@ -184,7 +187,7 @@ export default function OrderDetail() {
             <button type="button" className="btn btn-secondary" onClick={() => setEditingOrder(true)}>Изменить заказ</button>
           </>
         ) : (
-          <div className="form-panel" style={{ marginBottom: 0 }}>
+          <div className="form-panel" ref={orderFormRef} style={{ marginBottom: 0 }}>
             <h3 className="form-panel-title">Изменение заказа</h3>
             <label>Номер заказа</label>
             <input value={orderForm.orderNumber} onChange={e => setOrderForm(f => ({ ...f, orderNumber: e.target.value }))} />
@@ -226,7 +229,7 @@ export default function OrderDetail() {
           Автоплан: нужны <strong>бригады у категории</strong> (Справочники → Категории → «Бригады»). Перепланирование удаляет старые задачи и заново распределяет позиции с учётом загрузки.
         </p>
         {(showItemForm || editingItem) && (
-          <div className="form-panel">
+          <div className="form-panel" ref={itemFormRef}>
             <h3 className="form-panel-title">{editingItem ? 'Изменение позиции' : 'Новая позиция'}</h3>
             <label>Товар</label>
             <select

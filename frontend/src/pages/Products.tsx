@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { useScrollToForm } from '../useScrollToForm'
 import type { Product, ProductCategory, ProductTeamCapacity } from '../types'
 
 export default function Products() {
@@ -9,6 +10,7 @@ export default function Products() {
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
+  const formRef = useScrollToForm(editing?.id ?? (showForm ? 'new' : null))
   const [form, setForm] = useState({ code: '', name: '', categoryId: '', capacityPerDay: '' })
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
@@ -106,7 +108,7 @@ export default function Products() {
         </div>
 
         {(showForm || editing !== null) && (
-          <div className="form-panel">
+          <div className="form-panel" ref={formRef}>
             <h3 className="form-panel-title">{editing ? 'Изменение товара' : 'Новый товар'}</h3>
             <label>Код</label>
             <input value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="Код" />

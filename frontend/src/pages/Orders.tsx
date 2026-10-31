@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { useScrollToForm } from '../useScrollToForm'
 import type { Order } from '../types'
 
 type CompletionInfo = { expectedCompletionDate: string | null; completionPct: number }
@@ -15,6 +16,7 @@ export default function Orders() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const formRef = useScrollToForm(showForm ? 'new' : null)
   const [form, setForm] = useState({
     orderNumber: '',
     customer: '',
@@ -127,7 +129,7 @@ export default function Orders() {
         )}
 
         {showForm && tab === 'active' && (
-          <div className="form-panel">
+          <div className="form-panel" ref={formRef}>
             <h3 className="form-panel-title">Новый заказ</h3>
             <label>Номер заказа *</label>
             <input value={form.orderNumber} onChange={e => setForm(f => ({ ...f, orderNumber: e.target.value }))} placeholder="00ЦБ-001213" />

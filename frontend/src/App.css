@@ -400,6 +400,7 @@ tbody tr:hover td {
 /* ─── Forms ──────────────────────────────────────────────────── */
 /* .form-panel — форма из обычного блока (не <form>): те же поля + рамка-панель */
 .form-panel {
+  scroll-margin-top: 16px; /* отступ сверху при прокрутке к форме (useScrollToForm) */
   max-width: 520px;
   margin-bottom: 16px;
   padding: 18px 20px 20px;
@@ -1116,6 +1117,10 @@ input[type="checkbox"] {
   .chat-input textarea {
     font-size: 16px;
     resize: none;
+  }
+
+  .form-panel {
+    scroll-margin-top: calc(52px + env(safe-area-inset-top) + 12px);
   }
 
   .mobile-bar .nav-logo-icon {

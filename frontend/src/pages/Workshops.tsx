@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { useScrollToForm } from '../useScrollToForm'
 import type { Workshop } from '../types'
 
 export default function Workshops() {
@@ -8,6 +9,7 @@ export default function Workshops() {
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Workshop | null>(null)
+  const formRef = useScrollToForm(editing?.id ?? (showForm ? 'new' : null))
   const [formName, setFormName] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -79,7 +81,7 @@ export default function Workshops() {
           <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить участок</button>
         </div>
         {(showForm || editing !== null) && (
-          <div className="form-panel">
+          <div className="form-panel" ref={formRef}>
             <h3 className="form-panel-title">{editing ? 'Изменение участка' : 'Новый участок'}</h3>
             <label>Название</label>
             <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Название участка" />

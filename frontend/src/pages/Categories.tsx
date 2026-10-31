@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { useScrollToForm } from '../useScrollToForm'
 import type { CategoryBlock, ProductCategory, Team, Workshop } from '../types'
 
 // 1 товар, 2 товара, 5 товаров
@@ -20,6 +21,7 @@ export default function Categories() {
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<ProductCategory | null>(null)
+  const formRef = useScrollToForm(editing?.id ?? (showForm ? 'new' : null))
   const [form, setForm] = useState({ name: '', capacityPerTeamPerDay: 220, workshopId: '' })
   const [saving, setSaving] = useState(false)
   const [teamsForCategory, setTeamsForCategory] = useState<string | null>(null)
@@ -244,7 +246,7 @@ export default function Categories() {
           </button>
         </div>
         {(showForm || editing !== null) && (
-          <div className="form-panel">
+          <div className="form-panel" ref={formRef}>
             <h3 className="form-panel-title">{editing ? 'Изменение категории' : 'Новая категория'}</h3>
             <label>Название</label>
             <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Категория" />
