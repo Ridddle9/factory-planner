@@ -14,6 +14,7 @@ export default function Products() {
   const [form, setForm] = useState({ code: '', name: '', categoryId: '', capacityPerDay: '' })
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
   const [capacityModal, setCapacityModal] = useState<Product | null>(null)
 
   const load = async () => {
@@ -34,7 +35,8 @@ export default function Products() {
   const openCreate = () => {
     setShowForm(true)
     setEditing(null)
-    setForm({ code: '', name: '', categoryId: categories[0]?.id ?? '', capacityPerDay: '' })
+    // Если список отфильтрован по категории — новый товар сразу в ней
+    setForm({ code: '', name: '', categoryId: categoryFilter || categories[0]?.id || '', capacityPerDay: '' })
   }
 
   const openEdit = (p: Product) => {
@@ -85,9 +87,15 @@ export default function Products() {
     else load()
   }
 
-  const filtered = search.trim()
-    ? list.filter(p => p.code.toLowerCase().includes(search.toLowerCase()) || p.name.toLowerCase().includes(search.toLowerCase()))
-    : list
+  // Поиск по коду/названию и фильтр по категории работают вместе
+  const q = search.trim().toLowerCase()
+  const filtered = list.filter(p =>
+    (!categoryFilter || p.categoryId === categoryFilter) &&
+    (!q || p.code.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)))
+  const countByCategory = list.reduce<Record<string, number>>((acc, p) => {
+    acc[p.categoryId] = (acc[p.categoryId] ?? 0) + 1
+    return acc
+  }, {})
 
   if (loading) return <div className="card">Загрузка...</div>
 
@@ -99,13 +107,29 @@ export default function Products() {
         <div className="toolbar">
           <button type="button" className="btn btn-primary" onClick={openCreate} disabled={categories.length === 0}>Добавить товар</button>
           <input
-            className="toolbar-search"
-            style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.875rem' }}
+            className="toolbar-search toolbar-field"
             placeholder="Поиск по коду / названию"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+          <select
+            className="toolbar-field toolbar-select"
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value)}
+            aria-label="Фильтр по категории"
+          >
+            <option value="">Все категории ({list.length})</option>
+            {categories.map(c => (
+              <option key={c.id} value={c.id}>{c.name || '—'} ({countByCategory[c.id] ?? 0})</option>
+            ))}
+          </select>
+          {(search || categoryFilter) && (
+            <button type="button" className="btn btn-secondary" onClick={() => { setSearch(''); setCategoryFilter('') }}>Сбросить</button>
+          )}
         </div>
+        {(search || categoryFilter) && (
+          <div className="toolbar-summary">Показано {filtered.length} из {list.length}</div>
+        )}
 
         {(showForm || editing !== null) && (
           <div className="form-panel" ref={formRef}>
@@ -140,7 +164,7 @@ export default function Products() {
         )}
 
         {filtered.length === 0 ? (
-          <div className="empty">{search ? 'Ничего не найдено' : 'Нет товаров. Сначала добавьте категории.'}</div>
+          <div className="empty">{search || categoryFilter ? 'Ничего не найдено' : 'Нет товаров. Сначала добавьте категории.'}</div>
         ) : (
           <table className="stack sticky-head">
             <thead>
