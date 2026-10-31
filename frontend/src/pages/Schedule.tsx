@@ -32,9 +32,11 @@ function formatDayOfWeek(iso: string) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'short' })
 }
 
-function isWeekend(iso: string) {
+// Нерабочий день: выходной или праздник (те же праздники, что у планировщика — RUSSIAN_HOLIDAYS в src/index.ts)
+const HOLIDAYS = ['01-01', '01-02', '01-03', '01-04', '01-05', '01-06', '01-07', '01-08', '02-23', '03-08', '05-01', '05-09', '06-12', '11-04']
+function isOffDay(iso: string) {
   const d = new Date(iso + 'T00:00:00').getDay()
-  return d === 0 || d === 6
+  return d === 0 || d === 6 || HOLIDAYS.includes(iso.slice(5))
 }
 
 type CellData = {
@@ -231,6 +233,13 @@ export default function Schedule() {
 
   // header load tooltip
   const [headerTooltip, setHeaderTooltip] = useState<{ date: string; x: number; y: number } | null>(null)
+  // Подсказка в таблице (название товара, план/факт клетки) — сразу при наведении, без задержки title
+  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null)
+  const tipProps = (text: string) => ({
+    onMouseEnter: (e: React.MouseEvent) => setTip({ text, x: e.clientX, y: e.clientY }),
+    onMouseMove: (e: React.MouseEvent) => setTip({ text, x: e.clientX, y: e.clientY }),
+    onMouseLeave: () => setTip(null),
+  })
 
   // split form state (inside popup)
   const [showSplitForm, setShowSplitForm] = useState(false)
@@ -862,7 +871,7 @@ export default function Schedule() {
                 const count = rows.filter(r => (r.cells[d]?.plannedQuantity ?? 0) > 0).length
                 return (
                   <button key={d} type="button"
-                    className={['day-chip', d === mobileDate ? 'active' : '', isWeekend(d) ? 'weekend' : '', d === today ? 'today' : ''].filter(Boolean).join(' ')}
+                    className={['day-chip', d === mobileDate ? 'active' : '', isOffDay(d) ? 'weekend' : '', d === today ? 'today' : ''].filter(Boolean).join(' ')}
                     onClick={() => setMobileDate(d)}>
                     <span>{formatDayOfWeek(d)}</span>
                     <strong>{formatDateShort(d)}</strong>
@@ -919,8 +928,8 @@ export default function Schedule() {
             })()}
           </>
         ) : (
-          <div style={{ overflowX: 'auto', position: 'relative', cursor: cursorStyle }}>
-            <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed' }}>
+          <div className="schedule-grid-scroll" style={{ cursor: cursorStyle }} onScroll={() => setTip(null)}>
+            <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.8rem', tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: stickyW[0] }} />
                 <col style={{ width: stickyW[1] }} />
@@ -930,7 +939,7 @@ export default function Schedule() {
                 <tr>
                   {(['Бригада', 'Заказ / Товар'] as const).map((label, i) => (
                     <th key={label} style={{
-                      position: 'sticky', left: stickyLeft(i), zIndex: 3,
+                      position: 'sticky', left: stickyLeft(i), top: 0, zIndex: 5,
                       background: HEADER_BG, color: HEADER_COLOR,
                       padding: '6px 8px', textAlign: 'left',
                       borderRight: i === 1 ? '2px solid #cbd5e1' : '1px solid rgba(255,255,255,0.1)',
@@ -947,8 +956,9 @@ export default function Schedule() {
                         onMouseMove={e => { if (headerTooltip?.date === d) setHeaderTooltip({ date: d, x: e.clientX, y: e.clientY }) }}
                         onMouseLeave={() => setHeaderTooltip(null)}
                         style={{
-                          background: isWeekend(d) ? '#1e2d3d' : HEADER_BG,
-                          color: isWeekend(d) ? '#64748b' : HEADER_COLOR,
+                          position: 'sticky', top: 0, zIndex: 3,
+                          background: isOffDay(d) ? '#1e2d3d' : HEADER_BG,
+                          color: isOffDay(d) ? '#64748b' : HEADER_COLOR,
                           padding: '4px 2px', textAlign: 'center',
                           borderRight: '1px solid rgba(255,255,255,0.07)',
                           fontWeight: d === today ? 700 : 400,
@@ -986,7 +996,7 @@ export default function Schedule() {
                       result.push(
                         <tr key={`ws-${row.workshopName}-${i}`}>
                           <td colSpan={2 + dates.length} style={{
-                            position: 'sticky', left: 0,
+                            position: 'sticky', left: 0, zIndex: 2,
                             background: '#1e293b', color: '#94a3b8',
                             padding: '3px 10px',
                             fontWeight: 700, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em',
@@ -1011,18 +1021,18 @@ export default function Schedule() {
                             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                             color: 'var(--text-muted)', fontSize: '0.78rem',
                             verticalAlign: 'middle', borderBottom: '1px solid var(--border)',
-                          }} title={row.teamName}>{row.teamName}</td>
+                          }} {...tipProps(row.teamName)}>{row.teamName}</td>
                         )}
                         {/* Product cell */}
                         <td style={{
                           position: 'sticky', left: stickyLeft(1), zIndex: 1, background: rowBg,
                           padding: '4px 8px', borderRight: '2px solid #cbd5e1',
                           overflow: 'hidden',
-                        }}>
-                          <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={row.orderNumber}>
+                        }} {...tipProps(`${row.orderNumber}\n${row.productCode} — ${row.productName}`)}>
+                          <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {row.orderNumber}
                           </div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={`${row.productCode} — ${row.productName}`}>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {row.productName || row.productCode}
                           </div>
                         </td>
@@ -1039,15 +1049,16 @@ export default function Schedule() {
                               style={{
                                 textAlign: 'center', padding: '3px 2px',
                                 borderRight: '1px solid #e2e8f0',
-                                background: isSource ? '#fef08a' : bg,
+                                // Нерабочий день — серый на всю высоту (задача в нём, если есть, остаётся своего цвета)
+                                background: isSource ? '#fef08a' : bg !== 'transparent' ? bg : isOffDay(d) ? '#e2e8f0' : bg,
                                 transition: 'background 0.15s',
                                 cursor: mode === 'idle' ? 'pointer' : (isValidTarget ? 'crosshair' : 'default'),
                                 outline: isValidTarget ? '2px dashed #60a5fa' : 'none',
                                 outlineOffset: -2,
                               }}
-                              title={cell
-                                ? `План: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, Факт: ${cell.actualQuantity}` : ''}${cell.manual ? '\nРучная правка — перепланирование не трогает' : ''}${cell.comment ? `\n${cell.comment}` : ''}`
-                                : isValidTarget ? 'Кликните, чтобы перенести сюда' : undefined}
+                              {...(cell
+                                ? tipProps(`${row.productName || row.productCode}\nПлан: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, факт: ${cell.actualQuantity}` : ''}${cell.manual ? '\nРучная правка — перепланирование не трогает' : ''}${cell.comment ? `\n${cell.comment}` : ''}`)
+                                : isValidTarget ? tipProps('Кликните, чтобы перенести сюда') : {})}
                             >
                               {cell && cell.plannedQuantity > 0 && (
                                 <>
@@ -1082,6 +1093,13 @@ export default function Schedule() {
       </div>
 
       {/* Header load tooltip */}
+      {tip && (
+        <div className="grid-tip" style={{
+          left: Math.min(tip.x + 14, window.innerWidth - 380),
+          top: tip.y + 16 > window.innerHeight - 90 ? tip.y - 70 : tip.y + 16,
+        }}>{tip.text}</div>
+      )}
+
       {headerTooltip && (dateTeamLoads[headerTooltip.date] ?? []).length > 0 && (
         <div style={{
           position: 'fixed',

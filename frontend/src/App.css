@@ -867,6 +867,32 @@ input[type="checkbox"] {
   color: var(--success);
 }
 
+/* ─── Сетка «Графика» ─────────────────────────────────────────── */
+/* Своя прокрутка в обе стороны — иначе шапка (sticky top) не держится внутри горизонтальной прокрутки */
+.schedule-grid-scroll {
+  position: relative;
+  overflow: auto;
+  max-height: calc(100vh - 120px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Мгновенная подсказка в таблице (вместо title с задержкой) */
+.grid-tip {
+  position: fixed;
+  z-index: 1100;
+  max-width: 360px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+}
+
 /* ─── Ручные правки в графике ────────────────────────────────── */
 .pin-mark {
   font-size: 0.62em;
@@ -1184,6 +1210,10 @@ input[type="checkbox"] {
 
   .form-panel {
     scroll-margin-top: calc(52px + env(safe-area-inset-top) + 12px);
+  }
+
+  .schedule-grid-scroll {
+    max-height: calc(100dvh - 52px - env(safe-area-inset-top) - 24px);
   }
 
   .mobile-bar .nav-logo-icon {
