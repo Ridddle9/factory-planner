@@ -36,15 +36,15 @@ const pct = (v: number) => `${Math.round(v * 100)}%`
 
 // Цвет ячейки загрузки: перегруз — красный, полная — зелёный, частичная — жёлтый, пусто — серый
 function loadStyle(load: number, capacity: number): { background: string; color: string } {
-  if (capacity <= 0) return load > EPS ? { background: '#FECACA', color: '#991B1B' } : { background: '#F1F5F9', color: '#94A3B8' }
+  if (capacity <= 0) return load > EPS ? { background: 'var(--plan-danger-border)', color: 'var(--danger)' } : { background: 'var(--table-header-bg)', color: 'var(--text-muted)' }
   const r = load / capacity
-  if (r > 1 + EPS) return { background: '#FECACA', color: '#991B1B' }
-  if (r >= 0.95) return { background: '#DCFCE7', color: '#166534' }
-  if (r > EPS) return { background: '#FEF9C3', color: '#854D0E' }
-  return { background: '#FEF2F2', color: '#B91C1C' }
+  if (r > 1 + EPS) return { background: 'var(--plan-danger-border)', color: 'var(--danger)' }
+  if (r >= 0.95) return { background: 'var(--success-light)', color: 'var(--success)' }
+  if (r > EPS) return { background: 'var(--warning-light)', color: 'var(--warning)' }
+  return { background: 'var(--danger-light)', color: 'var(--danger)' }
 }
 
-const HEAD = { background: 'var(--sidebar-bg)', color: '#e2e8f0' }
+const HEAD = { background: 'var(--plan-header)', color: 'var(--text-secondary)' }
 
 export default function TeamLoad({ teams }: { teams: Team[] }) {
   const [mode, setMode] = useState<Mode>('all')
@@ -122,7 +122,7 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
           По: <input type="date" value={dateTo} onChange={e => e.target.value && setDateTo(e.target.value)} />
         </label>
         {mode !== 'brigade' && (
-          <div style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <div className="planning-submodes">
             {modes.map(([m, label, count]) => (
               <button key={m} type="button" className={`btn btn-sm ${mode === m ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode(m)}>
                 {label}
@@ -151,10 +151,10 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
                 </colgroup>
                 <thead>
                   <tr>
-                    <th className="sticky-col" style={{ ...HEAD, position: 'sticky', left: 0, zIndex: 2, padding: '6px 10px', textAlign: 'left', fontSize: '0.72rem', textTransform: 'uppercase' }}>Бригада</th>
+                    <th className="sticky-col" style={{ ...HEAD, position: 'sticky', left: 0, zIndex: 2, padding: '6px 10px', textAlign: 'left', fontSize: '0.75rem' }}>Бригада</th>
                     <th style={{ ...HEAD, padding: '4px 2px', fontSize: '0.72rem' }} title="Средняя загрузка за рабочие дни периода">Ср.</th>
                     {matrix.days.map(d => (
-                      <th key={d.date} style={{ ...HEAD, background: d.working ? HEAD.background : '#1e2d3d', color: d.working ? HEAD.color : '#64748b', padding: '4px 2px', textAlign: 'center' }}>
+                      <th key={d.date} style={{ ...HEAD, background: d.working ? HEAD.background : 'var(--plan-weekend)', color: d.working ? HEAD.color : 'var(--text-secondary)', padding: '4px 2px', textAlign: 'center' }}>
                         <div style={{ fontSize: '0.62rem', opacity: 0.7 }}>{fmtWeekday(d.date)}</div>
                         <div style={{ fontSize: '0.72rem' }}>{fmtDay(d.date)}</div>
                       </th>
@@ -206,9 +206,9 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
                   </colgroup>
                   <thead>
                     <tr>
-                      <th className="sticky-col" style={{ ...HEAD, position: 'sticky', left: 0, zIndex: 2, padding: '6px 10px', textAlign: 'left', fontSize: '0.72rem', textTransform: 'uppercase' }}>Заказ / товар</th>
+                      <th className="sticky-col" style={{ ...HEAD, position: 'sticky', left: 0, zIndex: 2, padding: '6px 10px', textAlign: 'left', fontSize: '0.75rem' }}>Заказ / товар</th>
                       {detail.days.map(d => (
-                        <th key={d.date} style={{ ...HEAD, background: d.capacity > 0 ? HEAD.background : '#1e2d3d', color: d.capacity > 0 ? HEAD.color : '#64748b', padding: '4px 2px', textAlign: 'center' }}>
+                        <th key={d.date} style={{ ...HEAD, background: d.capacity > 0 ? HEAD.background : 'var(--plan-weekend)', color: d.capacity > 0 ? HEAD.color : 'var(--text-secondary)', padding: '4px 2px', textAlign: 'center' }}>
                           <div style={{ fontSize: '0.62rem', opacity: 0.7 }}>{fmtWeekday(d.date)}</div>
                           <div style={{ fontSize: '0.72rem' }}>{fmtDay(d.date)}</div>
                         </th>
@@ -234,7 +234,7 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
                         {detail.days.map(d => {
                           const c = r.cells[d.date]
                           return (
-                            <td key={d.date} style={{ textAlign: 'center', padding: '3px 2px', borderLeft: '1px solid var(--border)', background: c ? '#EFF6FF' : undefined }}
+                            <td key={d.date} style={{ textAlign: 'center', padding: '3px 2px', borderLeft: '1px solid var(--border)', background: c ? 'var(--primary-light)' : undefined }}
                               title={c ? `${c.planned} шт · ${pct(c.share)} дня${c.actual !== null ? ` · факт ${c.actual}` : ''}${c.manual ? ' · ручная правка' : ''}` : undefined}>
                               {c && (
                                 <>
@@ -263,7 +263,7 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
             </div>
             <table className="stack" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                <tr style={{ background: 'var(--bg)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   <th style={{ padding: '6px 12px', textAlign: 'left' }}>Дата</th>
                   <th style={{ padding: '6px 12px', textAlign: 'left' }}>Бригада</th>
                   <th style={{ padding: '6px 12px', textAlign: 'right' }}>Загрузка</th>

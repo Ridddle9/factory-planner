@@ -82,8 +82,8 @@ export default function Orders() {
   }
 
   const priorityLabel = (p: number) => {
-    if (p <= 5)  return { text: 'Критический', color: '#dc2626' }
-    if (p <= 10) return { text: 'Высокий',     color: '#ea580c' }
+    if (p <= 5)  return { text: 'Критический', color: 'var(--danger)' }
+    if (p <= 10) return { text: 'Высокий',     color: 'var(--warning)' }
     if (p <= 20) return { text: 'Средний',      color: 'var(--text-muted)' }
     return              { text: 'Низкий',       color: 'var(--text-muted)', opacity: 0.6 }
   }
@@ -119,6 +119,7 @@ export default function Orders() {
   return (
     <>
       <h1 className="page-title">Заказы</h1>
+      <p className="page-description">Заказы клиентов, сроки готовности и приоритеты производства.</p>
       {error && <div className="error">{error}</div>}
       <div className="card">
 
@@ -191,7 +192,7 @@ export default function Orders() {
                     <td className="stack-title"><Link to={`/orders/${o.id}`}>{o.orderNumber}</Link></td>
                     <td data-label="Клиент">{o.customer}</td>
                     {tab === 'active' && (
-                      <td data-label="Готово по плану" style={{ color: expected ? '#16a34a' : 'var(--text-muted)', fontWeight: expected ? 600 : undefined }}>
+                      <td data-label="Готово по плану" style={{ color: expected ? 'var(--success)' : 'var(--text-muted)', fontWeight: expected ? 600 : undefined }}>
                         {expected ? formatDate(expected) : '—'}
                       </td>
                     )}

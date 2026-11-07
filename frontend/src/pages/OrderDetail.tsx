@@ -209,7 +209,7 @@ export default function OrderDetail() {
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Позиции заказа</h2>
         {(autoPlanMessage || replanMessage) && (
-          <div style={{ marginBottom: '0.5rem', color: '#2a7c59', fontSize: '0.9rem' }}>
+          <div style={{ marginBottom: '0.5rem', color: 'var(--success)', fontSize: '0.9rem' }}>
             {autoPlanMessage}
             {replanMessage && <div>{replanMessage}</div>}
           </div>
@@ -225,7 +225,7 @@ export default function OrderDetail() {
             {replanning ? 'Перепланирование…' : 'Перепланировать заказ'}
           </button>
         </div>
-        <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#666' }}>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
           Автоплан: нужны <strong>бригады у категории</strong> (Справочники → Категории → «Бригады»). Перепланирование удаляет старые задачи и заново распределяет позиции с учётом загрузки.
         </p>
         {(showItemForm || editingItem) && (

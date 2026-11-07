@@ -119,6 +119,7 @@ export default function Import() {
   return (
     <>
       <h1 className="page-title">Импорт Excel</h1>
+      <p className="page-description">Загрузка заказов и фактического выпуска из Excel.</p>
 
       <div className="card" style={{ maxWidth: 600 }}>
         <p style={{ margin: '0 0 16px', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
@@ -150,7 +151,7 @@ export default function Import() {
 
       {/* Конфликты факта */}
       {conflicts.length > 0 && (
-        <div className="card" style={{ maxWidth: 700, border: '1px solid #fecaca', background: '#fff5f5' }}>
+        <div className="card" style={{ maxWidth: 700, border: '1px solid var(--plan-danger-border)', background: 'var(--danger-light)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
             <span style={{ fontSize: '1.1rem' }}>⚠️</span>
             <strong>Конфликты факта — {conflicts.length} позиций</strong>
@@ -161,7 +162,7 @@ export default function Import() {
           </p>
           <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
-              <tr style={{ background: '#fee2e2', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+              <tr style={{ background: 'var(--danger-light)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                 <th style={{ padding: '5px 10px', textAlign: 'left' }}>Заказ</th>
                 <th style={{ padding: '5px 10px', textAlign: 'left' }}>Товар</th>
                 <th style={{ padding: '5px 10px', textAlign: 'right' }}>Факт (ручной)</th>
@@ -171,7 +172,7 @@ export default function Import() {
             </thead>
             <tbody>
               {conflicts.map(c => (
-                <tr key={c.taskId} style={{ borderBottom: '1px solid #fecaca' }}>
+                <tr key={c.taskId} style={{ borderBottom: '1px solid var(--plan-danger-border)' }}>
                   <td className="stack-title" style={{ padding: '7px 10px', fontWeight: 600 }}>{c.orderNumber}</td>
                   <td data-label="Товар" style={{ padding: '7px 10px', color: 'var(--text-muted)' }}>{c.productCode}</td>
                   <td data-label="Факт (ручной)" style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 600 }}>{c.existingFact}</td>
@@ -241,18 +242,18 @@ export default function Import() {
 
       {/* Незапланированные позиции */}
       {unplanned.length > 0 && (
-        <div className="card" style={{ maxWidth: 700, border: '1px solid #fed7aa', background: '#fff7ed' }}>
+        <div className="card" style={{ maxWidth: 700, border: '1px solid var(--plan-warning-border)', background: 'var(--warning-light)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
             <span style={{ fontSize: '1.1rem' }}>⚠</span>
-            <strong style={{ color: '#c2410c' }}>Не запланировано — {unplanned.length} позиций</strong>
+            <strong style={{ color: 'var(--warning)' }}>Не запланировано — {unplanned.length} позиций</strong>
           </div>
-          <p style={{ fontSize: '0.82rem', color: '#92400e', margin: '0 0 14px' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--warning)', margin: '0 0 14px' }}>
             По этим позициям остаток («К обеспечению») больше суммы будущих задач.
             Их нужно распланировать вручную на странице <strong>Расписание</strong>.
           </p>
           <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
-              <tr style={{ background: '#ffedd5', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#92400e' }}>
+              <tr style={{ background: 'var(--warning-light)', fontSize: '0.75rem', color: 'var(--warning)' }}>
                 <th style={{ padding: '5px 10px', textAlign: 'left' }}>Заказ</th>
                 <th style={{ padding: '5px 10px', textAlign: 'left' }}>Товар</th>
                 <th style={{ padding: '5px 10px', textAlign: 'right' }}>Остаток K</th>
@@ -262,12 +263,12 @@ export default function Import() {
             </thead>
             <tbody>
               {unplanned.map(u => (
-                <tr key={u.orderItemId} style={{ borderBottom: '1px solid #fed7aa' }}>
+                <tr key={u.orderItemId} style={{ borderBottom: '1px solid var(--plan-warning-border)' }}>
                   <td className="stack-title" style={{ padding: '7px 10px', fontWeight: 600 }}>{u.orderNumber}</td>
-                  <td data-label="Товар" style={{ padding: '7px 10px', color: '#92400e' }}>{u.productCode}</td>
+                  <td data-label="Товар" style={{ padding: '7px 10px', color: 'var(--warning)' }}>{u.productCode}</td>
                   <td data-label="Остаток K" style={{ padding: '7px 10px', textAlign: 'right' }}>{u.remaining}</td>
                   <td data-label="Запланировано" style={{ padding: '7px 10px', textAlign: 'right' }}>{u.planned}</td>
-                  <td data-label="Нехватка" style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>+{u.gap}</td>
+                  <td data-label="Нехватка" style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 700, color: 'var(--danger)' }}>+{u.gap}</td>
                 </tr>
               ))}
             </tbody>
@@ -276,7 +277,7 @@ export default function Import() {
       )}
 
       {conflictsSaved && (
-        <div className="card" style={{ maxWidth: 600, background: 'var(--success-light)', border: '1px solid #BBF7D0', color: 'var(--success)', padding: '12px 16px' }}>
+        <div className="card" style={{ maxWidth: 600, background: 'var(--success-light)', border: '1px solid var(--plan-success-border)', color: 'var(--success)', padding: '12px 16px' }}>
           ✓ Конфликты разрешены
         </div>
       )}
@@ -332,7 +333,7 @@ export default function Import() {
               {showFactDetails && factDetails.length > 0 && (
                 <tr>
                   <td colSpan={3} style={{ padding: 0 }}>
-                    <table style={{ width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse', background: '#f0fdf4' }}>
+                    <table style={{ width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse', background: 'var(--success-light)' }}>
                       <thead>
                         <tr style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
                           <th style={{ padding: '4px 10px', textAlign: 'left', fontWeight: 500 }}>Заказ</th>
@@ -342,7 +343,7 @@ export default function Import() {
                       </thead>
                       <tbody>
                         {factDetails.map((fd, i) => (
-                          <tr key={i} style={{ borderTop: '1px solid #bbf7d0' }}>
+                          <tr key={i} style={{ borderTop: '1px solid var(--plan-success-border)' }}>
                             <td style={{ padding: '4px 10px', fontWeight: 600 }}>{fd.orderNumber}</td>
                             <td style={{ padding: '4px 10px', color: 'var(--text-muted)' }}>{fd.productCode}</td>
                             <td style={{ padding: '4px 10px', textAlign: 'right', color: 'var(--success)', fontWeight: 600 }}>{fd.fact}</td>

@@ -201,6 +201,7 @@ export default function Categories() {
   return (
     <>
       <h1 className="page-title">Категории номенклатуры</h1>
+      <p className="page-description">Категории продукции, мощности и привязка к бригадам.</p>
       {error && <div className="error">{error}</div>}
       <div className="card">
         <div className="tabs" style={{ marginBottom: '1rem' }}>
@@ -337,7 +338,7 @@ export default function Categories() {
               <>
                 <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 1rem' }}>
                   {categoryTeams.length === 0 ? (
-                    <li style={{ color: '#888' }}>Нет назначенных бригад</li>
+                    <li style={{ color: 'var(--text-muted)' }}>Нет назначенных бригад</li>
                   ) : (
                     categoryTeams.map(t => (
                       <li key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -378,7 +379,7 @@ export default function Categories() {
                 ) : (
                   <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 1rem' }}>
                     {blocks.map(b => (
-                      <li key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', padding: '0.5rem 0.75rem', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca' }}>
+                      <li key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', padding: '0.5rem 0.75rem', background: 'var(--danger-light)', borderRadius: 6, border: '1px solid var(--plan-danger-border)' }}>
                         <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums', fontSize: '0.875rem' }}>
                           {b.startDate.slice(0, 10)} — {b.endDate.slice(0, 10)}
                         </span>

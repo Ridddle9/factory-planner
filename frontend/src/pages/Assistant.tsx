@@ -124,7 +124,10 @@ export default function Assistant() {
   return (
     <div className="chat">
       <div className="page-header">
-        <h1 className="page-title" style={{ margin: 0 }}>Помощник</h1>
+        <div>
+          <h1 className="page-title">Помощник</h1>
+          <p className="page-description">Ответы на вопросы о заказах, графике и загрузке — по данным из базы.</p>
+        </div>
         {messages.length > 0 && (
           <button type="button" className="btn btn-secondary" onClick={reset} disabled={sending}>Новый чат</button>
         )}

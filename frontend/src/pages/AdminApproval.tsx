@@ -21,9 +21,15 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  APPROVED: '#16a34a',
-  PENDING: '#d97706',
-  REJECTED: '#dc2626',
+  APPROVED: 'var(--success)',
+  PENDING: 'var(--warning)',
+  REJECTED: 'var(--danger)',
+}
+
+const STATUS_BG: Record<string, string> = {
+  APPROVED: 'var(--success-light)',
+  PENDING: 'var(--warning-light)',
+  REJECTED: 'var(--danger-light)',
 }
 
 export default function AdminApproval() {
@@ -123,18 +129,18 @@ export default function AdminApproval() {
       {/* Блок синхронизации с 1С */}
       <h2>Синхронизация с 1С</h2>
       <div className="card" style={{ marginBottom: 24 }}>
-        <div style={{ marginBottom: 8, color: '#64748b', fontSize: 14 }}>
+        <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 14 }}>
           Этот токен вводится в расширение 1С (<strong>ФабрикаПланнер</strong>) в поле «Токен».
           Без него синхронизация не пройдёт.
         </div>
 
         {tokenLoading ? (
-          <span style={{ color: '#94a3b8' }}>Загрузка...</span>
+          <span style={{ color: 'var(--text-muted)' }}>Загрузка...</span>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <code style={{
               flex: 1,
-              background: '#f1f5f9',
+              background: 'var(--table-header-bg)',
               padding: '8px 12px',
               borderRadius: 6,
               fontSize: 13,
@@ -150,14 +156,14 @@ export default function AdminApproval() {
             <button
               className="btn"
               onClick={() => setTokenVisible(v => !v)}
-              style={{ background: '#64748b', minWidth: 80 }}
+              style={{ background: 'var(--text-secondary)', color: '#fff', minWidth: 80 }}
             >
               {tokenVisible ? 'Скрыть' : 'Показать'}
             </button>
             <button
               className="btn"
               onClick={copyToken}
-              style={{ background: copied ? '#16a34a' : '#2563eb', minWidth: 90 }}
+              style={{ background: copied ? 'var(--success)' : 'var(--primary)', color: '#fff', minWidth: 90 }}
             >
               {copied ? 'Скопировано' : 'Скопировать'}
             </button>
@@ -165,7 +171,7 @@ export default function AdminApproval() {
               className="btn"
               onClick={regenerateToken}
               disabled={regenerating}
-              style={{ background: '#dc2626', minWidth: 110 }}
+              style={{ background: 'var(--danger)', color: '#fff', minWidth: 110 }}
             >
               {regenerating ? 'Генерация...' : 'Перегенерировать'}
             </button>
@@ -176,10 +182,10 @@ export default function AdminApproval() {
       {/* Заявки на доступ */}
       <h2>Заявки на доступ</h2>
 
-      {loading && <p style={{ color: '#64748b' }}>Загрузка...</p>}
+      {loading && <p style={{ color: 'var(--text-secondary)' }}>Загрузка...</p>}
 
       {!loading && users.length === 0 && (
-        <div className="card" style={{ color: '#64748b', padding: '2rem', textAlign: 'center' }}>
+        <div className="card" style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center' }}>
           Новых заявок нет
         </div>
       )}
@@ -188,7 +194,7 @@ export default function AdminApproval() {
         <div key={u.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, padding: '12px 16px' }}>
           <div style={{ flex: 1 }}>
             <strong>{u.email}</strong>
-            <div style={{ fontSize: 12, color: '#94a3b8' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
               Подал заявку: {new Date(u.createdAt).toLocaleString('ru-RU')}
             </div>
           </div>
@@ -196,7 +202,7 @@ export default function AdminApproval() {
             className="btn"
             onClick={() => decide(u.id, 'APPROVED')}
             disabled={processing === u.id}
-            style={{ background: '#16a34a', minWidth: 100 }}
+            style={{ background: 'var(--success)', minWidth: 100 }}
           >
             Разрешить
           </button>
@@ -204,7 +210,7 @@ export default function AdminApproval() {
             className="btn"
             onClick={() => decide(u.id, 'REJECTED')}
             disabled={processing === u.id}
-            style={{ background: '#dc2626', minWidth: 100 }}
+            style={{ background: 'var(--danger)', minWidth: 100 }}
           >
             Отклонить
           </button>
@@ -214,27 +220,27 @@ export default function AdminApproval() {
       {/* Все пользователи компании */}
       <h2 style={{ marginTop: 32 }}>Пользователи компании</h2>
 
-      {allUsersLoading && <p style={{ color: '#64748b' }}>Загрузка...</p>}
+      {allUsersLoading && <p style={{ color: 'var(--text-secondary)' }}>Загрузка...</p>}
 
       {!allUsersLoading && (
         <div className="card card-flush" style={{ padding: 0, overflow: 'hidden' }}>
           <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: '#475569' }}>Email</th>
-                <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: '#475569' }}>Роль</th>
-                <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: '#475569' }}>Статус</th>
-                <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: '#475569' }}>Дата регистрации</th>
+              <tr style={{ background: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+                <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Email</th>
+                <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Роль</th>
+                <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Статус</th>
+                <th style={{ textAlign: 'left', padding: '10px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Дата регистрации</th>
               </tr>
             </thead>
             <tbody>
               {allUsers.map((u, i) => (
                 <tr
                   key={u.id}
-                  style={{ borderBottom: i < allUsers.length - 1 ? '1px solid #f1f5f9' : undefined }}
+                  style={{ borderBottom: i < allUsers.length - 1 ? '1px solid var(--table-header-bg)' : undefined }}
                 >
                   <td className="stack-title" style={{ padding: '10px 16px' }}>{u.email}</td>
-                  <td data-label="Роль" style={{ padding: '10px 16px', color: u.role === 'ADMIN' ? '#7c3aed' : '#64748b' }}>
+                  <td data-label="Роль" style={{ padding: '10px 16px', color: u.role === 'ADMIN' ? 'var(--primary)' : 'var(--text-secondary)' }}>
                     {u.role === 'ADMIN' ? 'Администратор' : 'Сотрудник'}
                   </td>
                   <td data-label="Статус" style={{ padding: '10px 16px' }}>
@@ -244,13 +250,13 @@ export default function AdminApproval() {
                       borderRadius: 12,
                       fontSize: 12,
                       fontWeight: 600,
-                      background: (STATUS_COLOR[u.status] ?? '#94a3b8') + '22',
-                      color: STATUS_COLOR[u.status] ?? '#94a3b8',
+                      background: STATUS_BG[u.status] ?? 'var(--table-header-bg)',
+                      color: STATUS_COLOR[u.status] ?? 'var(--text-muted)',
                     }}>
                       {STATUS_LABEL[u.status] ?? u.status}
                     </span>
                   </td>
-                  <td data-label="Дата регистрации" style={{ padding: '10px 16px', color: '#94a3b8', fontSize: 13 }}>
+                  <td data-label="Дата регистрации" style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 13 }}>
                     {new Date(u.createdAt).toLocaleString('ru-RU')}
                   </td>
                 </tr>

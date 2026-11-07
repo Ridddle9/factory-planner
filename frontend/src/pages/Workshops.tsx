@@ -75,6 +75,7 @@ export default function Workshops() {
   return (
     <>
       <h1 className="page-title">Участки</h1>
+      <p className="page-description">Производственные участки вашей компании.</p>
       {error && <div className="error">{error}</div>}
       <div className="card">
         <div className="toolbar">

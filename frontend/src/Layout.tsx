@@ -1,109 +1,112 @@
 import { useEffect, useState } from 'react'
-import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { ChartBar } from '@phosphor-icons/react/dist/csr/ChartBar'
+import { CalendarBlank } from '@phosphor-icons/react/dist/csr/CalendarBlank'
+import { ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots'
+import { SquaresFour } from '@phosphor-icons/react/dist/csr/SquaresFour'
+import { Stack } from '@phosphor-icons/react/dist/csr/Stack'
+import { Package } from '@phosphor-icons/react/dist/csr/Package'
+import { UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree'
+import { ClipboardText } from '@phosphor-icons/react/dist/csr/ClipboardText'
+import { UploadSimple } from '@phosphor-icons/react/dist/csr/UploadSimple'
+import { ShieldCheck } from '@phosphor-icons/react/dist/csr/ShieldCheck'
+import { SignOut } from '@phosphor-icons/react/dist/csr/SignOut'
+import { CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight'
 import { useAuth } from './contexts/AuthContext'
 
-// Заголовок верхней панели на телефоне
-const PAGE_TITLES: [string, string][] = [
-  ['/workshops', 'Участки'],
-  ['/categories', 'Категории'],
-  ['/products', 'Товары'],
-  ['/teams', 'Бригады'],
-  ['/orders', 'Заказы'],
-  ['/schedule', 'График'],
-  ['/planning', 'Аналитика'],
-  ['/plan', 'План на день'],
-  ['/import', 'Импорт Excel'],
-  ['/assistant', 'Помощник'],
-  ['/admin/approvals', 'Заявки на доступ'],
+const sections = [
+  { title: 'Рабочее пространство', items: [
+    { to: '/orders', title: 'Заказы', icon: ClipboardText },
+    { to: '/schedule', title: 'График', icon: CalendarBlank },
+    { to: '/planning', title: 'Аналитика', icon: ChartBar },
+    { to: '/assistant', title: 'Помощник', icon: ChatCircleDots },
+  ] },
+  { title: 'Справочники', items: [
+    { to: '/workshops', title: 'Участки', icon: SquaresFour },
+    { to: '/categories', title: 'Категории', icon: Stack },
+    { to: '/products', title: 'Товары', icon: Package },
+    { to: '/teams', title: 'Бригады', icon: UsersThree },
+  ] },
+  { title: 'Управление', items: [
+    { to: '/import', title: 'Импорт Excel', icon: UploadSimple },
+  ] },
 ]
 
 export default function Layout({ children }: { children?: React.ReactNode }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
+  const { pathname } = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  const activeSection = sections.find(section => section.items.some(item => pathname.startsWith(item.to)))
+  const currentPage = sections.flatMap(section => section.items).find(item => pathname.startsWith(item.to))?.title
+    ?? (pathname.startsWith('/admin') ? 'Заявки на доступ' : pathname === '/plan' ? 'План на день' : 'Участки')
 
   // Меню на телефоне закрывается при переходе на другую страницу
-  useEffect(() => { setMenuOpen(false) }, [location.pathname])
+  useEffect(() => { setMenuOpen(false) }, [pathname])
 
   async function handleLogout() {
     await logout()
     navigate('/login')
   }
 
-  const pageTitle = PAGE_TITLES.find(([path]) => location.pathname.startsWith(path))?.[1] ?? 'Участки'
-
   return (
     <div className="layout">
+      <a className="skip-link" href="#main-content">Перейти к содержимому</a>
       <header className="mobile-bar">
         <button type="button" className="mobile-bar-menu" aria-label="Открыть меню" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
           <span /><span /><span />
         </button>
-        <div className="mobile-bar-title">{pageTitle}</div>
+        <div className="mobile-bar-title">{currentPage}</div>
         <img className="nav-logo-icon" src="/icon-192.png" alt="" />
       </header>
       {menuOpen && <div className="nav-backdrop" onClick={() => setMenuOpen(false)} />}
-      <nav className={menuOpen ? 'nav open' : 'nav'}>
+      <nav className={menuOpen ? 'nav open' : 'nav'} aria-label="Основная навигация">
         <div className="nav-logo">
-          <img className="nav-logo-icon" src="/icon-192.png" alt="" />
           <div>
-            <h1>Factory Planner</h1>
-            <span>Производственное планирование</span>
+            <div className="nav-wordmark">Factory Planner<span className="wordmark-period">.</span></div>
+            <span>Планирование производства</span>
           </div>
+        </div>
+        <div className="nav-workspace">
+          <span className="workspace-caption">Компания</span>
+          <strong title={user?.company.name}>{user?.company.name}</strong>
         </div>
         <ul>
-          <li>
-            <span className="nav-section-label">Справочники</span>
-            <ul>
-              <li><NavLink to="/workshops" end className={({ isActive }) => isActive ? 'active' : ''}>Участки</NavLink></li>
-              <li><NavLink to="/categories" className={({ isActive }) => isActive ? 'active' : ''}>Категории</NavLink></li>
-              <li><NavLink to="/products" className={({ isActive }) => isActive ? 'active' : ''}>Товары</NavLink></li>
-              <li><NavLink to="/teams" className={({ isActive }) => isActive ? 'active' : ''}>Бригады</NavLink></li>
-            </ul>
-          </li>
-          <li>
-            <span className="nav-section-label">Работа</span>
-            <ul>
-              <li><NavLink to="/orders" className={({ isActive }) => isActive ? 'active' : ''}>Заказы</NavLink></li>
-              <li><NavLink to="/schedule" className={({ isActive }) => isActive ? 'active' : ''}>График</NavLink></li>
-              <li><NavLink to="/planning" className={({ isActive }) => isActive ? 'active' : ''}>Аналитика</NavLink></li>
-              <li><NavLink to="/assistant" className={({ isActive }) => isActive ? 'active' : ''}>Помощник</NavLink></li>
-              <li><NavLink to="/import" className={({ isActive }) => isActive ? 'active' : ''}>Импорт Excel</NavLink></li>
-            </ul>
-          </li>
-          {user?.role === 'ADMIN' && (
-            <li>
-              <span className="nav-section-label">Администрирование</span>
+          {sections.map(section => (
+            <li key={section.title}>
+              <span className="nav-section-label">{section.title}</span>
               <ul>
-                <li><NavLink to="/admin/approvals" className={({ isActive }) => isActive ? 'active' : ''}>Заявки на доступ</NavLink></li>
+                {section.items.map(({ to, title, icon: Icon }) => (
+                  <li key={to}>
+                    <NavLink to={to} className={({ isActive }) => isActive || (to === '/workshops' && pathname === '/') ? 'active' : ''}>
+                      <Icon size={18} weight="regular" aria-hidden="true" /><span>{title}</span>
+                    </NavLink>
+                  </li>
+                ))}
+                {section.title === 'Управление' && user?.role === 'ADMIN' && (
+                  <li><NavLink to="/admin/approvals" className={({ isActive }) => isActive ? 'active' : ''}>
+                    <ShieldCheck size={18} aria-hidden="true" /><span>Заявки на доступ</span>
+                  </NavLink></li>
+                )}
               </ul>
             </li>
-          )}
+          ))}
         </ul>
-
-        <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.1)', marginTop: 'auto' }}>
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 6 }}>
-            {user?.email}
-            {user?.role === 'ADMIN' && (
-              <span style={{ marginLeft: 6, background: 'rgba(255,255,255,0.15)', borderRadius: 4, padding: '1px 5px', fontSize: 10 }}>
-                ADMIN
-              </span>
-            )}
-          </div>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 8 }}>
-            {user?.company.name}
-          </div>
-          <button
-            onClick={handleLogout}
-            style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: '5px 10px', borderRadius: 4, fontSize: 12, width: '100%' }}
-          >
-            Выйти
-          </button>
+        <div className="nav-account">
+          <div className="account-avatar" aria-hidden="true">{user?.email.slice(0, 1).toUpperCase()}</div>
+          <div className="account-info"><strong title={user?.email}>{user?.email}</strong><span>{user?.role === 'ADMIN' ? 'Администратор' : 'Сотрудник'}</span></div>
+          <button className="account-logout" onClick={handleLogout} title="Выйти" aria-label="Выйти"><SignOut size={18} /></button>
         </div>
       </nav>
-      <main className="main">
-        {children ?? <Outlet />}
-      </main>
+      <div className="workspace-main">
+        <header className="workspace-header">
+          <div className="workspace-breadcrumb"><span>{activeSection?.title ?? (pathname.startsWith('/admin') ? 'Управление' : 'Справочники')}</span><CaretRight size={12} aria-hidden="true" /><strong>{currentPage}</strong></div>
+          <span className="workspace-context">Производственный учёт</span>
+        </header>
+        <main className="main" id="main-content" tabIndex={-1}>
+          {children ?? <Outlet />}
+        </main>
+      </div>
     </div>
   )
 }

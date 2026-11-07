@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { api } from '../api'
+import './planning.css'
 import type { DailyTask, Order, OrderItem, Team, Workshop } from '../types'
 
 function todayISO() {
@@ -94,10 +95,10 @@ const MOBILE_QUERY = '(max-width: 768px)'
 
 // Цвет полоски статуса задачи в списке дня (те же статусы, что и фон ячейки в сетке)
 const STATUS_BORDER: Record<string, string> = {
-  '#FEE2E2': '#F87171',
-  '#DCFCE7': '#4ADE80',
-  '#FEF9C3': '#FACC15',
-  '#DBEAFE': '#60A5FA',
+  'var(--danger-light)': 'var(--danger)',
+  'var(--success-light)': 'var(--success)',
+  'var(--warning-light)': 'var(--warning)',
+  'var(--plan-scheduled)': 'var(--plan-scheduled-border)',
 }
 
 export default function Schedule() {
@@ -417,14 +418,14 @@ export default function Schedule() {
 
   const cellBg = (cell: CellData | undefined, date: string): string => {
     if (!cell || cell.plannedQuantity === 0) return 'transparent'
-    if (date < today && cell.actualQuantity === null) return '#FEE2E2'
-    if (cell.actualQuantity !== null && cell.actualQuantity >= cell.plannedQuantity) return '#DCFCE7'
-    if (cell.actualQuantity !== null && cell.actualQuantity > 0) return '#FEF9C3'
-    return '#DBEAFE'
+    if (date < today && cell.actualQuantity === null) return 'var(--danger-light)'
+    if (cell.actualQuantity !== null && cell.actualQuantity >= cell.plannedQuantity) return 'var(--success-light)'
+    if (cell.actualQuantity !== null && cell.actualQuantity > 0) return 'var(--warning-light)'
+    return 'var(--plan-scheduled)'
   }
 
-  const HEADER_BG = 'var(--sidebar-bg)'
-  const HEADER_COLOR = '#e2e8f0'
+  const HEADER_BG = 'var(--plan-header)'
+  const HEADER_COLOR = 'var(--text-secondary)'
   const stickyW = isMobile ? STICKY_W_MOBILE : STICKY_W
   const stickyLeft = (i: number) => stickyW.slice(0, i).reduce((a, b) => a + b, 0)
 
@@ -620,11 +621,11 @@ export default function Schedule() {
   }
 
   const loadBarColor = (load: DateLoad | undefined) => {
-    if (!load || load.capacity === 0) return '#94a3b8'
+    if (!load || load.capacity === 0) return 'var(--text-muted)'
     const pct = load.planned / load.capacity
-    if (pct >= 1) return '#ef4444'
-    if (pct >= 0.75) return '#f59e0b'
-    return '#22c55e'
+    if (pct >= 1) return 'var(--danger)'
+    if (pct >= 0.75) return 'var(--warning)'
+    return 'var(--success)'
   }
 
   const loadBarWidth = (load: DateLoad | undefined) => {
@@ -634,9 +635,12 @@ export default function Schedule() {
 
 
   return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-        <h1 className="page-title" style={{ margin: 0 }}>График производства</h1>
+    <div className="schedule-page">
+      <div className="schedule-heading">
+        <h1 className="page-title">График производства</h1>
+        <p className="planning-description">Задачи, сроки и загрузка бригад в едином плане.</p>
+      </div>
+      <div className="schedule-toolbar">
         <button type="button" className="btn btn-secondary btn-sm schedule-actions-toggle" aria-expanded={showActions} onClick={() => setShowActions(v => !v)}>
           {showActions ? 'Скрыть действия' : 'Действия ▾'}
         </button>
@@ -644,7 +648,7 @@ export default function Schedule() {
         <button className="btn btn-secondary btn-sm" onClick={handleRollover} disabled={rollingOver || saving}>
           {rollingOver ? 'Переношу...' : 'Перенести недодел со вчера'}
         </button>
-        <button type="button" className="btn btn-sm" onClick={planUnplanned} disabled={planningUnplanned || replanning || saving}>
+        <button type="button" className="btn btn-primary btn-sm" onClick={planUnplanned} disabled={planningUnplanned || replanning || saving}>
           {planningUnplanned ? 'Планирую...' : 'Запланировать незапланированные'}
         </button>
         <button type="button" className="btn btn-secondary btn-sm" onClick={replanQueue} disabled={replanning || planningUnplanned || saving}>
@@ -657,12 +661,12 @@ export default function Schedule() {
           {loadingNoTeam ? 'Загрузка...' : noTeamCategories !== null ? 'Скрыть список' : 'Категории без бригад'}
         </button>
         <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowExport(v => !v)}>
-          {showExport ? 'Скрыть экспорт' : '↓ Скачать Excel'}
+          {showExport ? 'Скрыть экспорт' : 'Скачать Excel'}
         </button>
         </div>
         {undoAction && (
           <button className="btn btn-secondary btn-sm" onClick={handleUndo} disabled={saving}
-            style={{ borderColor: '#f59e0b', color: '#b45309' }}>
+            style={{ borderColor: 'var(--warning)', color: 'var(--warning)' }}>
             ↩ Отменить: {undoAction.label}
           </button>
         )}
@@ -670,7 +674,7 @@ export default function Schedule() {
 
       {showExport && (
         <div style={{ marginBottom: 10, padding: '10px 14px', borderRadius: 8, fontSize: '0.875rem',
-          background: 'var(--card-bg)', border: '1px solid var(--border)',
+          background: 'var(--surface)', border: '1px solid var(--border)',
           display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 600 }}>Период:</span>
           <input type="date" value={exportFrom} onChange={e => setExportFrom(e.target.value)}
@@ -686,7 +690,7 @@ export default function Schedule() {
 
       {planResult && (
         <div style={{ marginBottom: 10, padding: '8px 14px', borderRadius: 8, fontSize: '0.83rem',
-          background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d',
+          background: 'var(--success-light)', border: '1px solid var(--plan-success-border)', color: 'var(--success)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>{planResult}</span>
           <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
@@ -702,7 +706,7 @@ export default function Schedule() {
           {noTeamCategories.length > 0 && (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
-                <tr style={{ background: 'var(--sidebar-bg)', color: '#e2e8f0' }}>
+                <tr style={{ background: 'var(--plan-header)', color: 'var(--text-secondary)' }}>
                   <th style={{ padding: '6px 12px', textAlign: 'left' }}>Категория</th>
                   <th style={{ padding: '6px 12px', textAlign: 'left' }}>Участок</th>
                   <th style={{ padding: '6px 12px' }}></th>
@@ -724,7 +728,7 @@ export default function Schedule() {
                       </td>
                     </tr>
                     {assigningCategory === c.id && (
-                      <tr key={c.id + '_assign'} style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle, #f8fafc)' }}>
+                      <tr key={c.id + '_assign'} style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle, var(--plan-surface-muted))' }}>
                         <td colSpan={3} style={{ padding: '8px 12px' }}>
                           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                             <select value={assignTeamId} onChange={e => setAssignTeamId(e.target.value)} style={{ flex: 1 }}>
@@ -759,9 +763,9 @@ export default function Schedule() {
       {/* Rollover result */}
       {rolloverResult && (
         <div style={{ marginBottom: 10, padding: '8px 14px', borderRadius: 8, fontSize: '0.83rem',
-          background: rolloverResult.rolled === 0 ? '#f0fdf4' : '#fef9c3',
-          border: `1px solid ${rolloverResult.rolled === 0 ? '#86efac' : '#fde047'}`,
-          color: rolloverResult.rolled === 0 ? '#15803d' : '#854d0e',
+          background: rolloverResult.rolled === 0 ? 'var(--success-light)' : 'var(--warning-light)',
+          border: `1px solid ${rolloverResult.rolled === 0 ? 'var(--plan-success-border)' : 'var(--plan-warning-border)'}`,
+          color: rolloverResult.rolled === 0 ? 'var(--success)' : 'var(--warning)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>
             {rolloverResult.rolled === 0
@@ -773,7 +777,7 @@ export default function Schedule() {
         </div>
       )}
 
-      <div className="card">
+      <div className="card schedule-card">
         <div className="toolbar schedule-filters">
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             С: <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
@@ -804,12 +808,12 @@ export default function Schedule() {
           </label>
         </div>
 
-        <div className="schedule-legend" style={{ display: 'flex', gap: '1.25rem', marginBottom: '0.75rem', fontSize: '0.78rem', flexWrap: 'wrap', color: 'var(--text-muted)' }}>
+        <div className="schedule-legend">
           {[
-            { bg: '#DBEAFE', border: '#93C5FD', label: 'Запланировано' },
-            { bg: '#DCFCE7', border: '#86EFAC', label: 'Выполнено' },
-            { bg: '#FEF9C3', border: '#FDE047', label: 'Частично' },
-            { bg: '#FEE2E2', border: '#FCA5A5', label: 'Просрочено' },
+            { bg: 'var(--plan-scheduled)', border: 'var(--plan-scheduled-border)', label: 'Запланировано' },
+            { bg: 'var(--success-light)', border: 'var(--plan-success-border)', label: 'Выполнено' },
+            { bg: 'var(--warning-light)', border: 'var(--plan-warning-border)', label: 'Частично' },
+            { bg: 'var(--danger-light)', border: 'var(--plan-danger-border)', label: 'Просрочено' },
           ].map(({ bg, border, label }) => (
             <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
               <span style={{ display: 'inline-block', width: 12, height: 12, background: bg, border: `1px solid ${border}`, borderRadius: 2 }} />
@@ -908,8 +912,8 @@ export default function Schedule() {
                       position: 'sticky', left: stickyLeft(i), top: 0, zIndex: 5,
                       background: HEADER_BG, color: HEADER_COLOR,
                       padding: '6px 8px', textAlign: 'left',
-                      borderRight: i === 1 ? '2px solid #cbd5e1' : '1px solid rgba(255,255,255,0.1)',
-                      whiteSpace: 'nowrap', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em'
+                      borderRight: i === 1 ? '2px solid var(--border-strong)' : '1px solid var(--border)',
+                      whiteSpace: 'nowrap', fontWeight: 600, fontSize: '0.75rem', textTransform: 'none', letterSpacing: '0'
                     }}>{label}</th>
                   ))}
                   {dates.map(d => {
@@ -923,16 +927,16 @@ export default function Schedule() {
                         onMouseLeave={() => setHeaderTooltip(null)}
                         style={{
                           position: 'sticky', top: 0, zIndex: 3,
-                          background: isOffDay(d) ? '#1e2d3d' : HEADER_BG,
-                          color: isOffDay(d) ? '#64748b' : HEADER_COLOR,
+                          background: d === today ? 'var(--primary-light)' : isOffDay(d) ? 'var(--plan-weekend)' : HEADER_BG,
+                          color: d === today ? 'var(--primary)' : isOffDay(d) ? 'var(--text-muted)' : HEADER_COLOR,
                           padding: '4px 2px', textAlign: 'center',
-                          borderRight: '1px solid rgba(255,255,255,0.07)',
+                          borderRight: '1px solid var(--border)',
                           fontWeight: d === today ? 700 : 400,
                         }}>
                         <div style={{ fontSize: '0.68rem', opacity: 0.75 }}>{formatDayOfWeek(d)}</div>
                         <div style={{ fontSize: '0.78rem' }}>{formatDateShort(d)}</div>
                         {barW > 0 && (
-                          <div style={{ margin: '2px 4px 0', height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.1)' }}>
+                          <div style={{ margin: '2px 4px 0', height: 3, borderRadius: 2, background: 'var(--border)' }}>
                             <div style={{ width: `${barW}%`, height: '100%', borderRadius: 2, background: barColor, transition: 'width 0.3s' }} />
                           </div>
                         )}
@@ -963,10 +967,10 @@ export default function Schedule() {
                         <tr key={`ws-${row.workshopName}-${i}`}>
                           <td colSpan={2 + dates.length} style={{
                             position: 'sticky', left: 0, zIndex: 2,
-                            background: '#1e293b', color: '#94a3b8',
-                            padding: '3px 10px',
-                            fontWeight: 700, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em',
-                            borderTop: i > 0 ? '2px solid #cbd5e1' : undefined,
+                            background: 'var(--plan-section)', color: 'var(--text-secondary)',
+                            padding: '8px 10px',
+                            fontWeight: 600, fontSize: '0.75rem',
+                            borderTop: i > 0 ? '2px solid var(--border-strong)' : undefined,
                           }}>
                             {row.workshopName}
                           </td>
@@ -974,15 +978,15 @@ export default function Schedule() {
                       )
                     }
 
-                    const rowBg = i % 2 === 0 ? '#fff' : '#f8fafc'
+                    const rowBg = i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)'
                     const teamSpan = teamSpans[i]!
 
                     result.push(
-                      <tr key={row.orderItemId} style={{ height: 38 }}>
+                      <tr key={row.orderItemId} style={{ height: 46 }}>
                         {/* Team cell — only on first row of each span group */}
                         {teamSpan > 0 && (
                           <td rowSpan={teamSpan} style={{
-                            position: 'sticky', left: stickyLeft(0), zIndex: 1, background: '#f1f5f9',
+                            position: 'sticky', left: stickyLeft(0), zIndex: 1, background: 'var(--plan-header)',
                             padding: '4px 8px', borderRight: '1px solid var(--border)',
                             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                             color: 'var(--text-muted)', fontSize: '0.78rem',
@@ -992,7 +996,7 @@ export default function Schedule() {
                         {/* Product cell */}
                         <td style={{
                           position: 'sticky', left: stickyLeft(1), zIndex: 1, background: rowBg,
-                          padding: '4px 8px', borderRight: '2px solid #cbd5e1',
+                          padding: '4px 8px', borderRight: '2px solid var(--border-strong)',
                           overflow: 'hidden',
                         }} {...tipProps(`${row.orderNumber}\n${row.productCode} — ${row.productName}`)}>
                           <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1012,9 +1016,9 @@ export default function Schedule() {
                               onClick={e => openPopup(e, row, d, cell ?? null)}
                               style={{
                                 textAlign: 'center', padding: '3px 2px',
-                                borderRight: '1px solid #e2e8f0',
+                                borderRight: '1px solid var(--border)',
                                 // Нерабочий день — серый на всю высоту (задача в нём, если есть, остаётся своего цвета)
-                                background: bg !== 'transparent' ? bg : isOffDay(d) ? '#e2e8f0' : bg,
+                                background: bg !== 'transparent' ? bg : isOffDay(d) ? 'var(--plan-weekend)' : bg,
                                 transition: 'background 0.15s',
                                 cursor: 'pointer',
                               }}
@@ -1024,9 +1028,9 @@ export default function Schedule() {
                             >
                               {cell && cell.plannedQuantity > 0 && (
                                 <>
-                                  <div style={{ fontWeight: 600, lineHeight: 1.2 }}>{cell.manual && <span className="pin-mark">📌</span>}{cell.plannedQuantity}</div>
+                                  <div style={{ fontWeight: 600, lineHeight: 1.4 }}>{cell.manual && <span className="pin-mark">📌</span>}{cell.plannedQuantity}</div>
                                   {cell.actualQuantity !== null && (
-                                    <div style={{ fontSize: '0.68rem', color: '#374151', lineHeight: 1 }}>✓{cell.actualQuantity}</div>
+                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>✓{cell.actualQuantity}</div>
                                   )}
                                 </>
                               )}
@@ -1156,13 +1160,14 @@ export default function Schedule() {
           left: headerTooltip.x + 12,
           top: headerTooltip.y + 12,
           zIndex: 1000,
-          background: '#1e293b',
-          color: '#e2e8f0',
+          background: 'var(--surface)',
+          color: 'var(--text)',
+          border: '1px solid var(--border)',
           borderRadius: 8,
           padding: '0.5rem 0.75rem',
           fontSize: '0.78rem',
           pointerEvents: 'none',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+          boxShadow: '0 6px 24px rgba(25,40,32,0.12)',
           minWidth: 180,
         }}>
           {(dateTeamLoads[headerTooltip.date] ?? []).map(t => {
@@ -1171,7 +1176,7 @@ export default function Schedule() {
             return (
               <div key={t.teamName} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '2px 0' }}>
                 <span style={{ opacity: 0.8 }}>{t.teamName}</span>
-                <span style={{ fontWeight: 700, color: over ? '#f87171' : warn ? '#fbbf24' : '#4ade80' }}>
+                <span style={{ fontWeight: 700, color: over ? 'var(--danger)' : warn ? 'var(--warning)' : 'var(--success)' }}>
                   {t.loadPct}%
                 </span>
               </div>
@@ -1185,7 +1190,7 @@ export default function Schedule() {
       {popup && (
         <div
           ref={popupRef}
-          className="cell-popup"
+          className="cell-popup schedule-cell-popup"
           style={{
             position: 'fixed',
             left: Math.min(popup.x, window.innerWidth - 280),
@@ -1231,7 +1236,7 @@ export default function Schedule() {
                   autoFocus={!isMobile}
                 />
                 {popup.cell.actualQuantity !== null && (
-                  <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>✓{popup.cell.actualQuantity}</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>✓{popup.cell.actualQuantity}</span>
                 )}
               </div>
               {/* Бригада меняется через «Перенести…» — там же видно её загрузку и что сдвинется */}
@@ -1319,9 +1324,9 @@ export default function Schedule() {
                     return (
                       <div style={{
                         padding: '0.4rem 0.6rem', borderRadius: 6, fontSize: '0.78rem',
-                        background: fits ? '#f0fdf4' : '#fef2f2',
-                        border: `1px solid ${fits ? '#86efac' : '#fca5a5'}`,
-                        color: fits ? '#15803d' : '#dc2626',
+                        background: fits ? 'var(--success-light)' : 'var(--danger-light)',
+                        border: `1px solid ${fits ? 'var(--plan-success-border)' : 'var(--plan-danger-border)'}`,
+                        color: fits ? 'var(--success)' : 'var(--danger)',
                       }}>
                         {fits ? (
                           <>Бригада может выполнить. Свободно: <strong>{availableQty}</strong> шт</>
@@ -1381,6 +1386,6 @@ export default function Schedule() {
           )}
         </div>
       )}
-    </>
+    </div>
   )
 }

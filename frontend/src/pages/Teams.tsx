@@ -35,9 +35,9 @@ function nextWorkingDay(iso: string) {
 
 // Цвет мощности: выше 100% — зелёный, ниже — жёлтый, меньше половины — красный
 function capColor(pct: number) {
-  if (pct > 100) return { color: '#15803d', background: '#f0fdf4' }
-  if (pct < 50) return { color: '#dc2626', background: '#fef2f2' }
-  if (pct < 100) return { color: '#d97706', background: '#fffbeb' }
+  if (pct > 100) return { color: 'var(--success)', background: 'var(--success-light)' }
+  if (pct < 50) return { color: 'var(--danger)', background: 'var(--danger-light)' }
+  if (pct < 100) return { color: 'var(--warning)', background: 'var(--warning-light)' }
   return { color: 'var(--text-muted)', background: undefined }
 }
 
@@ -211,7 +211,8 @@ export default function Teams() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Бригады</h1>
+        <div><h1 className="page-title">Бригады</h1>
+      <p className="page-description">Состав производства, доступные мощности и рабочие дни.</p></div>
       </div>
       {error && <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>{error} ✕</div>}
 
@@ -343,12 +344,12 @@ export default function Teams() {
             {/* Корректировки, сгруппированные в периоды */}
             {overrides.length > 0 && (
               <div style={{ marginBottom: '1rem' }}>
-                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
+                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
                   Активные корректировки
                 </div>
                 <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                   <thead>
-                    <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                    <tr style={{ background: 'var(--bg)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                       <th style={{ textAlign: 'left', padding: '4px 8px' }}>Бригада</th>
                       <th style={{ textAlign: 'left', padding: '4px 8px' }}>Период</th>
                       <th style={{ textAlign: 'center', padding: '4px 8px', width: 90 }}>Мощность</th>
@@ -384,7 +385,7 @@ export default function Teams() {
             )}
 
             {/* Сетка: клик по клетке открывает форму на этот день */}
-            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
+            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
               По дням — нажмите на клетку, чтобы изменить
             </div>
             <div style={{ overflowX: 'auto' }}>
@@ -395,17 +396,17 @@ export default function Teams() {
                 </colgroup>
                 <thead>
                   <tr>
-                    <th className="sticky-col" style={{ background: 'var(--sidebar-bg)', color: '#e2e8f0', padding: '5px 8px', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                    <th className="sticky-col" style={{ background: 'var(--table-header-bg)', color: 'var(--table-header-text)', padding: '5px 8px', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'none' }}>
                       Бригада
                     </th>
                     {dates.map(d => {
                       const off = !isWorkingDay(d)
                       return (
                         <th key={d} style={{
-                          background: off ? '#1e2d3d' : 'var(--sidebar-bg)',
-                          color: off ? '#64748b' : '#e2e8f0',
+                          background: off ? 'var(--plan-weekend)' : 'var(--table-header-bg)',
+                          color: off ? 'var(--text-muted)' : 'var(--table-header-text)',
                           padding: '4px 2px', textAlign: 'center', fontSize: '0.72rem',
-                          borderRight: '1px solid rgba(255,255,255,0.07)',
+                          borderRight: '1px solid var(--border)',
                         }}>
                           <div style={{ opacity: 0.7 }}>{new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
                           <div>{new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</div>
@@ -416,7 +417,7 @@ export default function Teams() {
                 </thead>
                 <tbody>
                   {list.map((team, ri) => (
-                    <tr key={team.id} style={{ background: ri % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                    <tr key={team.id} style={{ background: ri % 2 === 0 ? '#fff' : 'var(--bg)' }}>
                       <td className="sticky-col" style={{ padding: '6px 8px', fontWeight: 600, borderRight: '2px solid var(--primary)', fontSize: '0.82rem', background: 'inherit' }}>
                         {team.name}
                       </td>
@@ -430,11 +431,11 @@ export default function Teams() {
                             className={selected ? 'cap-cell cap-cell-selected' : 'cap-cell'}
                             onClick={() => !off && openCapCell(team.id, d)}
                             title={off ? 'Выходной' : cap ? `${pct}%${cap.note ? ' — ' + cap.note : ''} · нажмите, чтобы изменить` : 'Нажмите, чтобы изменить'}
-                            style={{ cursor: off ? 'default' : 'pointer', background: off ? '#f1f5f9' : cap ? capColor(pct).background : undefined }}>
+                            style={{ cursor: off ? 'default' : 'pointer', background: off ? 'var(--table-header-bg)' : cap ? capColor(pct).background : undefined }}>
                             {cap ? (
                               <span style={{ fontWeight: 700, fontSize: '0.75rem', color: capColor(pct).color }}>{pct}%</span>
                             ) : (
-                              <span style={{ fontSize: '0.65rem', color: '#cbd5e1' }}>{off ? '' : '—'}</span>
+                              <span style={{ fontSize: '0.65rem', color: 'var(--border-strong)' }}>{off ? '' : '—'}</span>
                             )}
                           </td>
                         )
