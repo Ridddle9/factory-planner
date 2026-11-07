@@ -92,6 +92,7 @@ export default function Products() {
   return (
     <>
       <h1 className="page-title">Товары</h1>
+      <p className="page-description">Номенклатура и производительность по каждому товару.</p>
       {error && <div className="error">{error}</div>}
       <div className="card">
         <div className="toolbar">

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import AuthFrame from './AuthFrame'
 
 export default function Register() {
   const [form, setForm] = useState({ inn: '', companyName: '', email: '', password: '' })
@@ -42,103 +43,79 @@ export default function Register() {
 
   if (success && !isFirstUser) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
-        <div className="card" style={{ width: 400, padding: '2rem', textAlign: 'center' }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
-          <h2>Заявка отправлена</h2>
-          <p style={{ color: '#64748b' }}>
-            Руководитель вашей компании должен подтвердить доступ.
-            После подтверждения вы сможете войти в систему.
-          </p>
-          <Link to="/login" className="btn" style={{ display: 'inline-block', marginTop: 12 }}>
-            Перейти ко входу
-          </Link>
+      <AuthFrame>
+        <div className="auth-success">
+          <p className="auth-eyebrow">Доступ к рабочему пространству</p>
+          <h1>Заявка отправлена</h1>
+          <p>Руководитель вашей компании должен подтвердить доступ.
+            После подтверждения вы сможете войти в систему.</p>
+          <Link to="/login" className="btn auth-submit">Перейти ко входу</Link>
         </div>
-      </div>
+      </AuthFrame>
     )
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
-      <div className="card" style={{ width: 400, padding: '2rem' }}>
-        <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>⚙</div>
-          <h2 style={{ margin: 0 }}>Регистрация</h2>
-          <p style={{ color: '#64748b', margin: '4px 0 0', fontSize: 13 }}>
-            Первый пользователь компании становится руководителем
-          </p>
-        </div>
+    <AuthFrame>
+      <header className="auth-heading">
+        <p className="auth-eyebrow">Доступ к рабочему пространству</p>
+        <h1>Регистрация</h1>
+        <p>Первый пользователь компании становится руководителем.</p>
+      </header>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <label style={{ fontSize: 13, color: '#374151' }}>
-            ИНН компании
-            <input
-              className="input"
-              type="text"
-              value={form.inn}
-              onChange={e => set('inn', e.target.value)}
-              placeholder="1234567890"
-              required
-              style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
-            />
-          </label>
+      <form onSubmit={handleSubmit} className="auth-form">
+        <label>
+          ИНН компании
+          <input
+            className="input"
+            type="text"
+            value={form.inn}
+            onChange={e => set('inn', e.target.value)}
+            placeholder="1234567890"
+            required
+          />
+        </label>
+        <label>
+          Название компании
+          <input
+            className="input"
+            type="text"
+            value={form.companyName}
+            onChange={e => set('companyName', e.target.value)}
+            placeholder="ООО Производство"
+            required
+          />
+        </label>
+        <label>
+          Email
+          <input
+            className="input"
+            type="email"
+            value={form.email}
+            onChange={e => set('email', e.target.value)}
+            placeholder="you@company.ru"
+            required
+          />
+        </label>
+        <label>
+          Пароль (минимум 6 символов)
+          <input
+            className="input"
+            type="password"
+            value={form.password}
+            onChange={e => set('password', e.target.value)}
+            placeholder="••••••••"
+            required
+            minLength={6}
+          />
+        </label>
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <button className="btn auth-submit" type="submit" disabled={loading}>
+          {loading ? 'Регистрация...' : 'Зарегистрироваться'}
+        </button>
+      </form>
 
-          <label style={{ fontSize: 13, color: '#374151' }}>
-            Название компании
-            <input
-              className="input"
-              type="text"
-              value={form.companyName}
-              onChange={e => set('companyName', e.target.value)}
-              placeholder="ООО Производство"
-              required
-              style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
-            />
-          </label>
-
-          <label style={{ fontSize: 13, color: '#374151' }}>
-            Email
-            <input
-              className="input"
-              type="email"
-              value={form.email}
-              onChange={e => set('email', e.target.value)}
-              placeholder="you@company.ru"
-              required
-              style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
-            />
-          </label>
-
-          <label style={{ fontSize: 13, color: '#374151' }}>
-            Пароль (минимум 6 символов)
-            <input
-              className="input"
-              type="password"
-              value={form.password}
-              onChange={e => set('password', e.target.value)}
-              placeholder="••••••••"
-              required
-              minLength={6}
-              style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
-            />
-          </label>
-
-          {error && (
-            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '8px 12px', color: '#b91c1c', fontSize: 13 }}>
-              {error}
-            </div>
-          )}
-
-          <button className="btn" type="submit" disabled={loading} style={{ marginTop: 4 }}>
-            {loading ? 'Регистрация...' : 'Зарегистрироваться'}
-          </button>
-        </form>
-
-        <p style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: '#64748b' }}>
-          Уже есть аккаунт?{' '}
-          <Link to="/login" style={{ color: '#2563eb' }}>Войти</Link>
-        </p>
-      </div>
-    </div>
+      <p className="auth-switch">Уже есть аккаунт? <Link to="/login">Войти</Link></p>
+    </AuthFrame>
   )
 }

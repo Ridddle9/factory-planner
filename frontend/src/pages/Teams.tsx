@@ -182,7 +182,8 @@ export default function Teams() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Бригады</h1>
+        <div><h1 className="page-title">Бригады</h1>
+      <p className="page-description">Состав производства, доступные мощности и рабочие дни.</p></div>
       </div>
       {error && <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>{error} ✕</div>}
 
@@ -197,7 +198,7 @@ export default function Teams() {
           <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить бригаду</button>
         </div>
         {(showForm || editing !== null) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div className="edit-form">
             <label>Название</label>
             <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Бригада №..." />
             <label>Количество людей</label>
@@ -314,15 +315,15 @@ export default function Teams() {
                 </colgroup>
                 <thead>
                   <tr>
-                    <th style={{ background: 'var(--sidebar-bg)', color: '#e2e8f0', padding: '5px 8px', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                    <th style={{ background: 'var(--table-header-bg)', color: 'var(--table-header-text)', padding: '5px 8px', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase' }}>
                       Бригада
                     </th>
                     {dates.map(d => {
                       const isWe = new Date(d + 'T00:00:00').getDay() === 0 || new Date(d + 'T00:00:00').getDay() === 6
                       return (
                         <th key={d} style={{
-                          background: isWe ? '#1e2d3d' : 'var(--sidebar-bg)',
-                          color: isWe ? '#64748b' : '#e2e8f0',
+                          background: isWe ? 'var(--border)' : 'var(--table-header-bg)',
+                          color: 'var(--table-header-text)',
                           padding: '4px 2px', textAlign: 'center', fontSize: '0.72rem',
                           borderRight: '1px solid rgba(255,255,255,0.07)',
                         }}>

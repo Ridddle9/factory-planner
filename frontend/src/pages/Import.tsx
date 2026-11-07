@@ -119,6 +119,7 @@ export default function Import() {
   return (
     <>
       <h1 className="page-title">Импорт Excel</h1>
+      <p className="page-description">Загрузка заказов и фактического выпуска из Excel.</p>
 
       <div className="card" style={{ maxWidth: 600 }}>
         <p style={{ margin: '0 0 16px', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>

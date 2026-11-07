@@ -150,14 +150,14 @@ export default function AdminApproval() {
             <button
               className="btn"
               onClick={() => setTokenVisible(v => !v)}
-              style={{ background: '#64748b', minWidth: 80 }}
+              style={{ background: 'var(--text-secondary)', color: '#fff', minWidth: 80 }}
             >
               {tokenVisible ? 'Скрыть' : 'Показать'}
             </button>
             <button
               className="btn"
               onClick={copyToken}
-              style={{ background: copied ? '#16a34a' : '#2563eb', minWidth: 90 }}
+              style={{ background: copied ? 'var(--success)' : 'var(--primary)', color: '#fff', minWidth: 90 }}
             >
               {copied ? 'Скопировано' : 'Скопировать'}
             </button>
@@ -165,7 +165,7 @@ export default function AdminApproval() {
               className="btn"
               onClick={regenerateToken}
               disabled={regenerating}
-              style={{ background: '#dc2626', minWidth: 110 }}
+              style={{ background: 'var(--danger)', color: '#fff', minWidth: 110 }}
             >
               {regenerating ? 'Генерация...' : 'Перегенерировать'}
             </button>

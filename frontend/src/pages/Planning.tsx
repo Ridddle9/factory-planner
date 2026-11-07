@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import { api } from '../api'
+import './planning.css'
 import type { DailyTask, Team } from '../types'
 
 interface OrderCompletion {
@@ -68,7 +69,7 @@ function UtilBar({ value, capacity }: { value: number; capacity: number }) {
   const color = pct >= 90 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)'
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 8, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden', minWidth: 80 }}>
+      <div style={{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', minWidth: 80 }}>
         <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.3s' }} />
       </div>
       <span style={{ fontSize: '0.78rem', fontWeight: 600, color, minWidth: 38, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
@@ -226,18 +227,21 @@ export default function Planning() {
 
   const dates = useMemo(() => getDatesInRange(dateFrom, dateTo), [dateFrom, dateTo])
 
-  const HEADER_BG = 'var(--sidebar-bg)'
-  const HEADER_COLOR = '#e2e8f0'
+  const HEADER_BG = 'var(--plan-header)'
+  const HEADER_COLOR = 'var(--text-secondary)'
 
   return (
-    <>
+    <div className="planning-page">
       <div className="page-header">
-        <h1 className="page-title">Аналитика планирования</h1>
+        <div>
+          <h1 className="page-title">Аналитика планирования</h1>
+          <p className="planning-description">План, фактический выпуск и доступные мощности.</p>
+        </div>
       </div>
 
       {error && <div className="error">{error}</div>}
 
-      <div className="card">
+      <div className="card planning-card">
         {/* Табы */}
         <div className="tabs" style={{ marginBottom: '1.25rem' }}>
           {([
@@ -274,7 +278,7 @@ export default function Planning() {
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 По: <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
               </label>
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              <div className="planning-submodes">
                 <button
                   type="button"
                   className={`btn btn-sm ${subMode === 'brigade' ? 'btn-primary' : 'btn-secondary'}`}
@@ -310,7 +314,7 @@ export default function Planning() {
                     {teamLoadMatrix.length === 0 ? (
                       <div className="empty">Нет задач за период.</div>
                     ) : (
-                      <div style={{ overflowX: 'auto' }}>
+                      <div className="planning-grid-scroll">
                         <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed' }}>
                           <colgroup>
                             <col style={{ width: 220 }} />
@@ -320,15 +324,15 @@ export default function Planning() {
                             <tr>
                               <th style={{
                                 position: 'sticky', left: 0, zIndex: 2, background: HEADER_BG, color: HEADER_COLOR,
-                                padding: '6px 10px', textAlign: 'left', borderRight: '2px solid var(--primary)',
-                                fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase',
+                                padding: '6px 10px', textAlign: 'left', borderRight: '1px solid var(--border-strong)',
+                                fontWeight: 600, fontSize: '0.75rem', textTransform: 'none',
                               }}>Категория</th>
                               {dates.map(d => (
                                 <th key={d} style={{
-                                  background: isWeekend(d) ? '#1e2d3d' : HEADER_BG, color: isWeekend(d) ? '#64748b' : HEADER_COLOR,
-                                  padding: '4px 2px', textAlign: 'center', borderRight: '1px solid rgba(255,255,255,0.07)',
+                                  background: isWeekend(d) ? 'var(--plan-weekend)' : HEADER_BG, color: isWeekend(d) ? 'var(--text-secondary)' : HEADER_COLOR,
+                                  padding: '4px 2px', textAlign: 'center', borderRight: '1px solid var(--border)',
                                 }}>
-                                  <div style={{ fontSize: '0.65rem', opacity: 0.7 }}>{new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
+                                  <div style={{ fontSize: '0.7rem', opacity: 0.7 }}>{new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
                                   <div style={{ fontSize: '0.75rem' }}>{formatDate(d)}</div>
                                 </th>
                               ))}
@@ -336,25 +340,25 @@ export default function Planning() {
                           </thead>
                           <tbody>
                             {teamLoadMatrix.map((cat, ri) => (
-                              <tr key={cat.name} style={{ background: ri % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                              <tr key={cat.name} style={{ background: ri % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
                                 <td style={{
-                                  position: 'sticky', left: 0, zIndex: 1, background: ri % 2 === 0 ? '#fff' : '#f8fafc',
-                                  padding: '5px 10px', borderRight: '2px solid var(--primary)',
+                                  position: 'sticky', left: 0, zIndex: 1, background: ri % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)',
+                                  padding: '5px 10px', borderRight: '1px solid var(--border-strong)',
                                   fontWeight: 500, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                                 }} title={cat.name}>{cat.name}</td>
                                 {dates.map(d => {
                                   const cell = cat.data.get(d)
                                   if (!cell) return (
-                                    <td key={d} style={{ borderRight: '1px solid #e2e8f0', background: isWeekend(d) ? '#f8fafc' : undefined }} />
+                                    <td key={d} style={{ borderRight: '1px solid var(--border)', background: isWeekend(d) ? 'var(--plan-surface-muted)' : undefined }} />
                                   )
                                   const pct = cell.capacity > 0 ? Math.min(100, (cell.planned / cell.capacity) * 100) : 0
-                                  const bg = pct >= 90 ? '#DCFCE7' : pct >= 50 ? '#FEF9C3' : '#FEE2E2'
-                                  const col = pct >= 90 ? '#16a34a' : pct >= 50 ? '#d97706' : '#dc2626'
+                                  const bg = pct >= 90 ? 'var(--success-light)' : pct >= 50 ? 'var(--warning-light)' : 'var(--danger-light)'
+                                  const col = pct >= 90 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)'
                                   return (
-                                    <td key={d} style={{ textAlign: 'center', padding: '3px 2px', borderRight: '1px solid #e2e8f0', background: bg }}
+                                    <td key={d} style={{ textAlign: 'center', padding: '3px 2px', borderRight: '1px solid var(--border)', background: bg }}
                                       title={`${cell.planned} / ${cell.capacity} (${pct.toFixed(0)}%)`}>
                                       <div style={{ fontWeight: 700, fontSize: '0.82rem', color: col }}>{cell.planned}</div>
-                                      <div style={{ fontSize: '0.65rem', color: '#6b7280' }}>{pct.toFixed(0)}%</div>
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{pct.toFixed(0)}%</div>
                                     </td>
                                   )
                                 })}
@@ -379,7 +383,7 @@ export default function Planning() {
                     <div key={group.orderNumber} style={{ marginBottom: '1rem' }}>
                       <div style={{
                         display: 'flex', alignItems: 'center', gap: 10,
-                        background: '#fef2f2', border: '1px solid #fecaca',
+                        background: 'var(--danger-light)', border: '1px solid var(--plan-danger-border)',
                         borderRadius: '6px 6px 0 0', padding: '6px 12px',
                       }}>
                         <span style={{ fontWeight: 700 }}>{group.orderNumber}</span>
@@ -387,7 +391,7 @@ export default function Planning() {
                       </div>
                       <table style={{ width: '100%', borderCollapse: 'collapse', borderTop: 'none' }}>
                         <thead>
-                          <tr style={{ background: '#fff5f5', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                          <tr style={{ background: 'var(--danger-light)', fontSize: '0.75rem', textTransform: 'none', letterSpacing: '0', color: 'var(--text-muted)' }}>
                             <th style={{ padding: '4px 12px', textAlign: 'left' }}>Дата</th>
                             <th style={{ padding: '4px 12px', textAlign: 'left' }}>Товар</th>
                             <th style={{ padding: '4px 12px', textAlign: 'right' }}>План</th>
@@ -423,7 +427,7 @@ export default function Planning() {
                       <div key={group.teamName} style={{ marginBottom: '1.25rem' }}>
                         <div style={{
                           display: 'flex', alignItems: 'center', gap: 12,
-                          background: 'var(--sidebar-bg)', color: HEADER_COLOR,
+                          background: 'var(--plan-header)', color: HEADER_COLOR,
                           borderRadius: '6px 6px 0 0', padding: '6px 12px',
                         }}>
                           <span style={{ fontWeight: 700 }}>{group.teamName}</span>
@@ -433,7 +437,7 @@ export default function Planning() {
                         </div>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                           <thead>
-                            <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                            <tr style={{ background: 'var(--plan-surface-muted)', fontSize: '0.75rem', textTransform: 'none', letterSpacing: '0', color: 'var(--text-muted)' }}>
                               <th style={{ padding: '4px 12px', textAlign: 'left' }}>Дата</th>
                               <th style={{ padding: '4px 12px', textAlign: 'right' }}>Загрузка</th>
                               <th style={{ padding: '4px 12px', textAlign: 'right' }}>Свободно</th>
@@ -472,7 +476,7 @@ export default function Planning() {
                 style={{ width: 280 }}
               />
               <button type="button" className="btn btn-secondary" onClick={loadOrdersCompletion} disabled={loading}>
-                {loading ? 'Загрузка…' : '↻ Обновить'}
+                {loading ? 'Загрузка…' : 'Обновить'}
               </button>
             </div>
 
@@ -493,7 +497,7 @@ export default function Planning() {
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                  <tr style={{ background: 'var(--plan-surface-muted)', fontSize: '0.75rem', textTransform: 'none', letterSpacing: '0', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '6px 12px', textAlign: 'left' }}>Заказ</th>
                     <th style={{ padding: '6px 12px', textAlign: 'left' }}>Клиент</th>
                     <th style={{ padding: '6px 12px', textAlign: 'left' }}>Менеджер</th>
@@ -514,7 +518,7 @@ export default function Planning() {
                       : null
 
                     return (
-                      <tr key={ord.orderId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                      <tr key={ord.orderId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
                         <td style={{ padding: '8px 12px', fontWeight: 700 }}>{ord.orderNumber}</td>
                         <td style={{ padding: '8px 12px', fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ord.customer}>{ord.customer}</td>
                         <td style={{ padding: '8px 12px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{ord.manager ?? '—'}</td>
@@ -524,13 +528,13 @@ export default function Planning() {
                         </td>
                         <td style={{ padding: '8px 12px' }}>
                           {/* Двойной прогресс-бар: факт (зелёный) + план (синий) */}
-                          <div style={{ position: 'relative', height: 10, background: '#e2e8f0', borderRadius: 5, overflow: 'hidden' }}
+                          <div style={{ position: 'relative', height: 10, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' }}
                             title={`Запланировано: ${ord.totalPlanned}, Выполнено: ${ord.totalProduced} / ${ord.totalQuantity}`}>
-                            <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${plannedPct}%`, background: '#93C5FD', borderRadius: 5 }} />
-                            <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${donePct}%`, background: '#22c55e', borderRadius: 5 }} />
+                            <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${plannedPct}%`, background: 'var(--plan-scheduled-border)', borderRadius: 5 }} />
+                            <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${donePct}%`, background: 'var(--success)', borderRadius: 5 }} />
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2, display: 'flex', justifyContent: 'space-between' }}>
-                            <span>план {ord.totalPlanned} · факт <span style={{ color: '#16a34a', fontWeight: 600 }}>{ord.totalProduced}</span> / {ord.totalQuantity}</span>
+                            <span>план {ord.totalPlanned} · факт <span style={{ color: 'var(--success)', fontWeight: 600 }}>{ord.totalProduced}</span> / {ord.totalQuantity}</span>
                             {ord.unplannedItems > 0 && <span style={{ color: 'var(--danger)' }}>{ord.unplannedItems} не в плане</span>}
                           </div>
                         </td>
@@ -572,7 +576,7 @@ export default function Planning() {
           <>
             <div className="toolbar">
               <button type="button" className="btn btn-secondary" onClick={loadUnplanned} disabled={loading}>
-                {loading ? 'Загрузка…' : '↻ Обновить'}
+                {loading ? 'Загрузка…' : 'Обновить'}
               </button>
               {unplannedData?.date && (
                 <span style={{ fontSize: '0.83rem', color: 'var(--text-muted)' }}>
@@ -591,12 +595,12 @@ export default function Planning() {
 
             {unplannedData && unplannedData.count > 0 && (
               <>
-                <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fef9c3', border: '1px solid #fde047', borderRadius: 6, fontSize: '0.85rem', color: '#854d0e' }}>
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--warning-light)', border: '1px solid var(--plan-warning-border)', borderRadius: 6, fontSize: '0.85rem', color: 'var(--warning)' }}>
                   Произведено без плана: <strong>{unplannedData.count} позиций</strong>
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
-                    <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                    <tr style={{ background: 'var(--plan-surface-muted)', fontSize: '0.75rem', textTransform: 'none', letterSpacing: '0', color: 'var(--text-muted)' }}>
                       <th style={{ padding: '6px 12px', textAlign: 'left' }}>Заказ</th>
                       <th style={{ padding: '6px 12px', textAlign: 'left' }}>Клиент</th>
                       <th style={{ padding: '6px 12px', textAlign: 'left' }}>Категория</th>
@@ -606,7 +610,7 @@ export default function Planning() {
                   </thead>
                   <tbody>
                     {unplannedData.items.map((item, i) => (
-                      <tr key={item.taskId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : '#fefce8' }}>
+                      <tr key={item.taskId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
                         <td style={{ padding: '7px 12px', fontWeight: 700 }}>{item.orderNumber}</td>
                         <td style={{ padding: '7px 12px', fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.customer}>{item.customer}</td>
                         <td style={{ padding: '7px 12px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{item.categoryName ?? '—'}</td>
@@ -614,7 +618,7 @@ export default function Planning() {
                           <span style={{ fontWeight: 600 }}>{item.productCode}</span>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 1 }}>{item.productName}</div>
                         </td>
-                        <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700, color: '#d97706' }}>
+                        <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--warning)' }}>
                           {item.actualQuantity.toLocaleString('ru-RU')}
                         </td>
                       </tr>
@@ -634,7 +638,7 @@ export default function Planning() {
                 Дата: <input type="date" value={factDayDate} onChange={e => { setFactDayDate(e.target.value); loadFactDay(e.target.value) }} />
               </label>
               <button type="button" className="btn btn-secondary" onClick={() => loadFactDay(factDayDate)} disabled={loading}>
-                {loading ? 'Загрузка…' : '↻ Обновить'}
+                {loading ? 'Загрузка…' : 'Обновить'}
               </button>
               {factDayData && (
                 <span style={{ fontSize: '0.83rem', color: 'var(--text-muted)' }}>
@@ -663,7 +667,7 @@ export default function Planning() {
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
-                    <tr style={{ background: '#f8fafc', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                    <tr style={{ background: 'var(--plan-surface-muted)', fontSize: '0.75rem', textTransform: 'none', letterSpacing: '0', color: 'var(--text-muted)' }}>
                       <th style={{ padding: '4px 12px', textAlign: 'left' }}>Категория</th>
                       <th style={{ padding: '4px 12px', textAlign: 'right' }}>Позиций</th>
                       <th style={{ padding: '4px 12px', textAlign: 'right' }}>Факт, шт.</th>
@@ -671,10 +675,10 @@ export default function Planning() {
                   </thead>
                   <tbody>
                     {team.categories.map((cat, i) => (
-                      <tr key={cat.categoryId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                      <tr key={cat.categoryId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
                         <td style={{ padding: '6px 12px', fontWeight: 500 }}>{cat.categoryName}</td>
                         <td style={{ padding: '6px 12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.82rem' }}>{cat.items}</td>
-                        <td style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>
+                        <td style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>
                           {cat.actual.toLocaleString('ru-RU')}
                         </td>
                       </tr>
@@ -686,6 +690,6 @@ export default function Planning() {
           </>
         )}
       </div>
-    </>
+    </div>
   )
 }

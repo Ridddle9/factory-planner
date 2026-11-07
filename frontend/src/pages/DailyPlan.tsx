@@ -289,7 +289,8 @@ export default function DailyPlan() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">План на день</h1>
+        <div><h1 className="page-title">План на день</h1>
+      <p className="page-description">Задачи бригад и фактический выпуск за день.</p></div>
         {!loading && tasks.length > 0 && (
           <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
             Итого план: <strong>{totalPlan}</strong> / факт: <strong>{totalFact}</strong>
@@ -458,7 +459,7 @@ export default function DailyPlan() {
                 <div key={wsName} style={{ marginBottom: '1.5rem' }}>
                   <div style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    background: 'var(--sidebar-bg)', color: '#e2e8f0',
+                    background: 'var(--table-header-bg)', color: 'var(--table-header-text)',
                     padding: '6px 12px', borderRadius: '6px 6px 0 0', fontWeight: 700, fontSize: '0.85rem',
                   }}>
                     <span>{wsName}</span>

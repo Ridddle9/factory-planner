@@ -73,13 +73,14 @@ export default function Workshops() {
   return (
     <>
       <h1 className="page-title">Участки</h1>
+      <p className="page-description">Производственные участки вашей компании.</p>
       {error && <div className="error">{error}</div>}
       <div className="card">
         <div className="toolbar">
           <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить участок</button>
         </div>
         {(showForm || editing !== null) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div className="edit-form">
             <label>Название</label>
             <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Название участка" />
             <div className="form-actions">

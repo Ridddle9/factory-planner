@@ -178,6 +178,7 @@ export default function Categories() {
   return (
     <>
       <h1 className="page-title">Категории номенклатуры</h1>
+      <p className="page-description">Категории продукции, мощности и привязка к бригадам.</p>
       {error && <div className="error">{error}</div>}
       <div className="card">
         <div className="toolbar">
@@ -186,7 +187,7 @@ export default function Categories() {
           </button>
         </div>
         {(showForm || editing !== null) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div className="edit-form">
             <label>Название</label>
             <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Категория" />
             <label>Мощность по умолчанию, ед./день <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.82rem' }}>(фолбэк — если у продукта нет мощности из маршрутизации 1С)</span></label>

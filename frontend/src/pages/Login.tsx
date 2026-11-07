@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import AuthFrame from './AuthFrame'
 
 export default function Login() {
   const { refresh } = useAuth()
@@ -43,70 +44,54 @@ export default function Login() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
-      <div className="card" style={{ width: 380, padding: '2rem' }}>
-        <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>⚙</div>
-          <h2 style={{ margin: 0 }}>Factory Planner</h2>
-          <p style={{ color: '#64748b', margin: '4px 0 0' }}>Вход в систему</p>
-        </div>
+    <AuthFrame>
+      <header className="auth-heading">
+        <p className="auth-eyebrow">Ваше рабочее пространство</p>
+        <h1>Вход в систему</h1>
+        <p>Войдите с данными вашей компании.</p>
+      </header>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <label style={{ fontSize: 13, color: '#374151' }}>
-            ИНН компании
-            <input
-              className="input"
-              type="text"
-              value={form.inn}
-              onChange={e => set('inn', e.target.value)}
-              placeholder="1234567890"
-              required
-              style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
-            />
-          </label>
+      <form onSubmit={handleSubmit} className="auth-form">
+        <label>
+          ИНН компании
+          <input
+            className="input"
+            type="text"
+            value={form.inn}
+            onChange={e => set('inn', e.target.value)}
+            placeholder="1234567890"
+            required
+          />
+        </label>
+        <label>
+          Email
+          <input
+            className="input"
+            type="email"
+            value={form.email}
+            onChange={e => set('email', e.target.value)}
+            placeholder="you@company.ru"
+            required
+          />
+        </label>
+        <label>
+          Пароль
+          <input
+            className="input"
+            type="password"
+            value={form.password}
+            onChange={e => set('password', e.target.value)}
+            placeholder="••••••••"
+            required
+          />
+        </label>
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <button className="btn auth-submit" type="submit" disabled={loading}>
+          {loading ? 'Вход...' : 'Войти'}
+        </button>
+      </form>
 
-          <label style={{ fontSize: 13, color: '#374151' }}>
-            Email
-            <input
-              className="input"
-              type="email"
-              value={form.email}
-              onChange={e => set('email', e.target.value)}
-              placeholder="you@company.ru"
-              required
-              style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
-            />
-          </label>
-
-          <label style={{ fontSize: 13, color: '#374151' }}>
-            Пароль
-            <input
-              className="input"
-              type="password"
-              value={form.password}
-              onChange={e => set('password', e.target.value)}
-              placeholder="••••••••"
-              required
-              style={{ display: 'block', width: '100%', marginTop: 4, boxSizing: 'border-box' }}
-            />
-          </label>
-
-          {error && (
-            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '8px 12px', color: '#b91c1c', fontSize: 13 }}>
-              {error}
-            </div>
-          )}
-
-          <button className="btn" type="submit" disabled={loading} style={{ marginTop: 4 }}>
-            {loading ? 'Вход...' : 'Войти'}
-          </button>
-        </form>
-
-        <p style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: '#64748b' }}>
-          Нет аккаунта?{' '}
-          <Link to="/register" style={{ color: '#2563eb' }}>Подать заявку</Link>
-        </p>
-      </div>
-    </div>
+      <p className="auth-switch">Нет аккаунта? <Link to="/register">Подать заявку</Link></p>
+    </AuthFrame>
   )
 }
