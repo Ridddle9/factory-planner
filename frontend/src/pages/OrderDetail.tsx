@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import { useScrollToForm } from '../useScrollToForm'
 import type { Order, OrderItem, Product } from '../types'
+import { ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft'
 
 // Дата передачи строки (или заказа, пока 1С не шлёт её по строкам) в виде ДД.ММ.ГГГГ
 function formatTransferDate(iso: string | null | undefined) {
@@ -174,18 +175,22 @@ export default function OrderDetail() {
 
   return (
     <>
-      <h1 className="page-title">
-        <Link to="/orders">Заказы</Link> → {order.orderNumber}
-      </h1>
-      {error && <div className="error">{error}</div>}
-      <div className="card">
-        {!editingOrder ? (
-          <>
-            <p><strong>Клиент:</strong> {order.customer}</p>
-            <p><strong>Менеджер:</strong> {order.manager ?? '—'}</p>
-            {order.description && <p><strong>Описание:</strong> {order.description}</p>}
+      <div className="page-heading">
+        <div>
+          <Link to="/orders" className="page-back"><ArrowLeft size={14} aria-hidden="true" /> Заказы</Link>
+          <h1 className="page-title">{order.orderNumber}</h1>
+          <p className="page-description">{order.customer}{order.manager ? ` · ${order.manager}` : ''}</p>
+        </div>
+        {!editingOrder && (
+          <div className="page-heading-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setEditingOrder(true)}>Изменить заказ</button>
-          </>
+          </div>
+        )}
+      </div>
+      {error && <div className="error">{error}</div>}
+      {(editingOrder || order.description) && <div className="card">
+        {!editingOrder ? (
+          <p style={{ margin: 0 }}>{order.description}</p>
         ) : (
           <div className="form-panel" ref={orderFormRef} style={{ marginBottom: 0 }}>
             <h3 className="form-panel-title">Изменение заказа</h3>
@@ -205,9 +210,9 @@ export default function OrderDetail() {
             </div>
           </div>
         )}
-      </div>
+      </div>}
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>Позиции заказа</h2>
+        <h2 className="card-title">Позиции заказа</h2>
         {(autoPlanMessage || replanMessage) && (
           <div style={{ marginBottom: '0.5rem', color: 'var(--success)', fontSize: '0.9rem' }}>
             {autoPlanMessage}
@@ -218,14 +223,14 @@ export default function OrderDetail() {
           <button type="button" className="btn btn-primary" onClick={() => { setShowItemForm(true); setEditingItem(null) }} disabled={products.length === 0}>
             Добавить позицию
           </button>
-          <button type="button" className="btn btn-primary" onClick={autoPlanOrder} disabled={items.length === 0 || autoPlanning} title="Нужны: срок поставки у заказа и назначенные бригады у категории товара (Справочники → Категории → Бригады)">
+          <button type="button" className="btn btn-secondary" onClick={autoPlanOrder} disabled={items.length === 0 || autoPlanning} title="Нужны: срок поставки у заказа и назначенные бригады у категории товара (Справочники → Категории → Бригады)">
             {autoPlanning ? 'Планирование…' : 'Автоплан по заказу'}
           </button>
           <button type="button" className="btn btn-secondary" onClick={replanOrder} disabled={items.length === 0 || replanning} title="Удалить старые задачи и перепланировать заказ с учётом текущей загрузки">
             {replanning ? 'Перепланирование…' : 'Перепланировать заказ'}
           </button>
         </div>
-        <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+        <p style={{ margin: '0.25rem 0 16px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
           Автоплан: нужны <strong>бригады у категории</strong> (Справочники → Категории → «Бригады»). Перепланирование удаляет старые задачи и заново распределяет позиции с учётом загрузки.
         </p>
         {(showItemForm || editingItem) && (
@@ -280,7 +285,7 @@ export default function OrderDetail() {
                   <td data-label="К обеспечению">{item.remainingQuantity !== undefined ? item.remainingQuantity : '—'}</td>
                   <td data-label="Дата передачи">{formatTransferDate(item.transferDate ?? item.order?.raytecDate)}</td>
                   <td className="stack-actions">
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => autoPlanItem(item.id)} disabled={autoPlanning}>Автоплан</button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => autoPlanItem(item.id)} disabled={autoPlanning}>Автоплан</button>
                     {' '}
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingItem(item)}>Изменить</button>
                     {' '}

@@ -3,6 +3,7 @@ import './list-pages.css'
 import { api } from '../api'
 import { useScrollToForm } from '../useScrollToForm'
 import type { Product, ProductCategory, ProductTeamCapacity } from '../types'
+import { X } from '@phosphor-icons/react/dist/csr/X'
 
 export default function Products() {
   const [list, setList] = useState<Product[]>([])
@@ -242,7 +243,7 @@ export default function Products() {
                 <div style={{ fontWeight: 600, fontSize: '1rem' }}>Производительность по бригадам</div>
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: 2 }}>{capacityModal.name}</div>
               </div>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setCapacityModal(null)}>✕</button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setCapacityModal(null)} aria-label="Закрыть"><X size={14} weight="bold" aria-hidden="true" /></button>
             </div>
             <table>
               <thead>

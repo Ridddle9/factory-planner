@@ -3,6 +3,7 @@ import './list-pages.css'
 import { api } from '../api'
 import { useScrollToForm } from '../useScrollToForm'
 import type { Team, TeamDayCapacity } from '../types'
+import { X } from '@phosphor-icons/react/dist/csr/X'
 
 // Сегодня по местному времени (toISOString дал бы дату по UTC — ночью по Москве это ещё вчера)
 function todayISO() {
@@ -222,7 +223,7 @@ export default function Teams() {
             : <button type="button" className="btn btn-primary" onClick={openCapNew} disabled={list.length === 0}>Добавить корректировку</button>}
         </div>
       </div>
-      {error && <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>{error} ✕</div>}
+      {error && <div className="error error-dismiss" onClick={() => setError(null)} title="Скрыть">{error} <X size={12} weight="bold" aria-hidden="true" /></div>}
 
       <div className="list-tabs">
         <button style={tabStyle(tab === 'teams')} onClick={() => setTab('teams')}>Список бригад</button>
@@ -378,7 +379,7 @@ export default function Teams() {
                           <td className="stack-actions" style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                             <button className="btn btn-secondary btn-sm" onClick={() => { setCapResult(null); setCapForm({ teamId: p.teamId, from: p.from, to: p.to, pct, note: p.note ?? '' }) }}>Изменить</button>
                             {' '}
-                            <button className="btn btn-danger btn-sm" onClick={() => deletePeriod(p)} aria-label="Снять корректировку">✕</button>
+                            <button className="btn btn-danger btn-sm" onClick={() => deletePeriod(p)} aria-label="Снять корректировку" title="Снять корректировку"><X size={14} weight="bold" aria-hidden="true" /></button>
                           </td>
                         </tr>
                       )
@@ -393,7 +394,8 @@ export default function Teams() {
               По дням — нажмите на клетку, чтобы изменить
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              {/* fixed + max-content: колонки ровно по colgroup, сетка прокручивается вбок, а не сжимается */}
+              <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: 'max-content' }}>
                 <colgroup>
                   <col className="sticky-col-width" style={{ width: 200 }} />
                   {dates.map(d => <col key={d} style={{ width: 64 }} />)}

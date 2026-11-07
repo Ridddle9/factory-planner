@@ -2,6 +2,10 @@ import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { api } from '../api'
 import './planning.css'
 import type { DailyTask, Order, OrderItem, Team, Workshop } from '../types'
+import { X } from '@phosphor-icons/react/dist/csr/X'
+import { CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown'
+import { ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise'
+import { PushPin } from '@phosphor-icons/react/dist/csr/PushPin'
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -652,7 +656,7 @@ export default function Schedule() {
       </div>
       <div className="schedule-toolbar">
         <button type="button" className="btn btn-secondary btn-sm schedule-actions-toggle" aria-expanded={showActions} onClick={() => setShowActions(v => !v)}>
-          {showActions ? 'Скрыть действия' : 'Действия ▾'}
+          Действия <CaretDown size={12} weight="bold" aria-hidden="true" style={{ transform: showActions ? 'rotate(180deg)' : undefined }} />
         </button>
         <div className={showActions ? 'schedule-actions open' : 'schedule-actions'}>
           <div className="schedule-action-group">
@@ -675,7 +679,7 @@ export default function Schedule() {
         <div className="schedule-undo">
           <button className="btn btn-secondary btn-sm" onClick={handleUndo} disabled={saving}
             style={{ borderColor: 'var(--warning)', color: 'var(--warning)' }}>
-            ↩ Отменить: {undoAction.label}
+            <ArrowCounterClockwise size={14} aria-hidden="true" /> Отменить: {undoAction.label}
           </button>
         </div>
       )}
@@ -701,15 +705,15 @@ export default function Schedule() {
           background: 'var(--success-light)', border: '1px solid var(--plan-success-border)', color: 'var(--success)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>{planResult}</span>
-          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
-            onClick={() => setPlanResult(null)}>✕</button>
+          <button type="button" className="icon-btn" aria-label="Закрыть"
+            onClick={() => setPlanResult(null)}><X size={14} weight="bold" aria-hidden="true" /></button>
         </div>
       )}
 
       {noTeamCategories !== null && (
         <div className="card" style={{ marginBottom: 10, padding: '12px 16px' }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>
-            Категории без бригад {noTeamCategories.length === 0 ? '— все назначены ✓' : `(${noTeamCategories.length})`}
+            Категории без бригад {noTeamCategories.length === 0 ? '— все назначены' : `(${noTeamCategories.length})`}
           </div>
           {noTeamCategories.length > 0 && (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
@@ -763,8 +767,8 @@ export default function Schedule() {
       )}
 
       {error && (
-        <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>
-          {error} ✕
+        <div className="error error-dismiss" onClick={() => setError(null)} title="Скрыть">
+          {error} <X size={12} weight="bold" aria-hidden="true" />
         </div>
       )}
 
@@ -778,10 +782,10 @@ export default function Schedule() {
           <span>
             {rolloverResult.rolled === 0
               ? 'Недодела нет — все задачи вчера выполнены.'
-              : `Перенесено ${rolloverResult.rolled} позиций.${rolloverResult.overloadedTeams.length > 0 ? ' ⚠ Часть бригад перегружена — проверьте план.' : ''}`}
+              : `Перенесено ${rolloverResult.rolled} позиций.${rolloverResult.overloadedTeams.length > 0 ? ' Часть бригад перегружена — проверьте план.' : ''}`}
           </span>
-          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
-            onClick={() => setRolloverResult(null)}>✕</button>
+          <button type="button" className="icon-btn" aria-label="Закрыть"
+            onClick={() => setRolloverResult(null)}><X size={14} weight="bold" aria-hidden="true" /></button>
         </div>
       )}
 
@@ -881,7 +885,7 @@ export default function Schedule() {
                                 <span>{row.productName || row.productCode}</span>
                               </span>
                               <span className="day-task-qty">
-                                <strong>{cell.manual && <span className="pin-mark" title={manualInfo(cell)}>📌</span>}{cell.plannedQuantity}</strong>
+                                <strong>{cell.manual && <PushPin className="pin-mark" size={12} weight="fill" aria-label={manualInfo(cell)} />}{cell.plannedQuantity}</strong>
                                 {cell.actualQuantity !== null && <span>✓{cell.actualQuantity}</span>}
                               </span>
                             </button>
@@ -1025,7 +1029,7 @@ export default function Schedule() {
                             >
                               {cell && cell.plannedQuantity > 0 && (
                                 <>
-                                  <div style={{ fontWeight: 600, lineHeight: 1.4 }}>{cell.manual && <span className="pin-mark">📌</span>}{cell.plannedQuantity}</div>
+                                  <div style={{ fontWeight: 600, lineHeight: 1.4 }}>{cell.manual && <PushPin className="pin-mark" size={12} weight="fill" aria-label="Ручная правка" />}{cell.plannedQuantity}</div>
                                   {cell.actualQuantity !== null && (
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>✓{cell.actualQuantity}</div>
                                   )}
@@ -1227,13 +1231,13 @@ export default function Schedule() {
                 {rows.find(r => r.orderItemId === popup.rowId)?.productCode ?? ''}
               </div>
               <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                {rows.find(r => r.orderItemId === popup.rowId)?.orderNumber ?? ''} · {popup.date}
+                {rows.find(r => r.orderItemId === popup.rowId)?.orderNumber ?? ''} · {popup.date.split('-').reverse().join('.')}
               </div>
             </div>
-            <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--text-muted)', lineHeight: 1 }} onClick={closePopup}>✕</button>
+            <button type="button" className="icon-btn" aria-label="Закрыть" onClick={closePopup}><X size={14} weight="bold" aria-hidden="true" /></button>
           </div>
           {isMobile && error && (
-            <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>{error} ✕</div>
+            <div className="error error-dismiss" onClick={() => setError(null)} title="Скрыть">{error} <X size={12} weight="bold" aria-hidden="true" /></div>
           )}
 
           {popup.cell ? (
@@ -1265,12 +1269,12 @@ export default function Schedule() {
                       Перенести…
                     </button>
                     <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowSplitForm(true)}>
-                      Разбить ÷
+                      Разбить
                     </button>
                   </div>
                   {popup.cell.manual && (
                     <div className="pin-note">
-                      <span>📌 Ручная правка — перепланирование её не трогает</span>
+                      <span className="pin-note-title"><PushPin size={14} weight="fill" aria-hidden="true" /> Ручная правка — перепланирование её не трогает</span>
                       <span style={{ fontSize: '0.75rem' }}>{manualInfo(popup.cell)}</span>
                       <button type="button" className="btn btn-secondary" onClick={handleUnpin} disabled={saving}>Снять закрепление</button>
                     </div>
@@ -1343,7 +1347,7 @@ export default function Schedule() {
                         {fits ? (
                           <>Бригада может выполнить. Свободно: <strong>{availableQty}</strong> шт</>
                         ) : (
-                          <>⚠ Бригада перегружена. Свободно: <strong>{availableQty ?? '?'}</strong> шт, нужно: <strong>{splitQty2}</strong></>
+                          <>Бригада перегружена. Свободно: <strong>{availableQty ?? '?'}</strong> шт, нужно: <strong>{splitQty2}</strong></>
                         )}
                       </div>
                     )

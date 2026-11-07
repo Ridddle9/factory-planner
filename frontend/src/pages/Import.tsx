@@ -1,5 +1,7 @@
 import { useState, useRef } from 'react'
 import { api } from '../api'
+import { Warning } from '@phosphor-icons/react/dist/csr/Warning'
+import { Check } from '@phosphor-icons/react/dist/csr/Check'
 
 interface ImportSummary {
   categories: { created: number; updated: number }
@@ -153,7 +155,7 @@ export default function Import() {
       {conflicts.length > 0 && (
         <div className="card" style={{ maxWidth: 700, border: '1px solid var(--plan-danger-border)', background: 'var(--danger-light)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <span style={{ fontSize: '1.1rem' }}>⚠️</span>
+            <Warning size={18} weight="fill" color="var(--danger)" aria-hidden="true" />
             <strong>Конфликты факта — {conflicts.length} позиций</strong>
           </div>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0 0 14px' }}>
@@ -244,7 +246,7 @@ export default function Import() {
       {unplanned.length > 0 && (
         <div className="card" style={{ maxWidth: 700, border: '1px solid var(--plan-warning-border)', background: 'var(--warning-light)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <span style={{ fontSize: '1.1rem' }}>⚠</span>
+            <Warning size={18} weight="fill" color="var(--warning)" aria-hidden="true" />
             <strong style={{ color: 'var(--warning)' }}>Не запланировано — {unplanned.length} позиций</strong>
           </div>
           <p style={{ fontSize: '0.82rem', color: 'var(--warning)', margin: '0 0 14px' }}>
@@ -278,7 +280,7 @@ export default function Import() {
 
       {conflictsSaved && (
         <div className="card" style={{ maxWidth: 600, background: 'var(--success-light)', border: '1px solid var(--plan-success-border)', color: 'var(--success)', padding: '12px 16px' }}>
-          ✓ Конфликты разрешены
+          <Check size={14} weight="bold" aria-hidden="true" style={{ verticalAlign: '-2px' }} /> Конфликты разрешены
         </div>
       )}
 

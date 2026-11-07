@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import type { Team } from '../types'
+import { PushPin } from '@phosphor-icons/react/dist/csr/PushPin'
+import { ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft'
 
 // Загрузка бригад: доля дня, которую занимают задачи (как в планировщике: штуки / норма бригады × численность).
 // capacity — мощность дня с учётом корректировок (0 — выходной или праздник).
@@ -116,7 +118,7 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
       <div className="toolbar planning-filters">
         {mode === 'brigade' && (
           <>
-            <button type="button" className="btn btn-secondary" onClick={() => setMode(backTo)}>← {backLabel}</button>
+            <button type="button" className="btn btn-secondary" onClick={() => setMode(backTo)}><ArrowLeft size={14} aria-hidden="true" /> {backLabel}</button>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               Бригада:
               <select value={teamId} onChange={e => setTeamId(e.target.value)} style={{ width: 220 }}>
@@ -238,7 +240,7 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
                               title={c ? `${c.planned} шт · ${pct(c.share)} дня${c.actual !== null ? ` · факт ${c.actual}` : ''}${c.manual ? ' · ручная правка' : ''}` : undefined}>
                               {c && (
                                 <>
-                                  <div style={{ fontWeight: 600 }}>{c.manual && <span className="pin-mark">📌</span>}{c.planned || '—'}</div>
+                                  <div style={{ fontWeight: 600 }}>{c.manual && <PushPin className="pin-mark" size={12} weight="fill" aria-label="Ручная правка" />}{c.planned || '—'}</div>
                                   <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{pct(c.share)}</div>
                                 </>
                               )}

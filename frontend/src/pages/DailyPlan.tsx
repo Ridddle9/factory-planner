@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { api } from '../api'
 import type { DailyTask, OrderItem, Team, TeamDayCapacity, Workshop } from '../types'
+import { X } from '@phosphor-icons/react/dist/csr/X'
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -297,7 +298,7 @@ export default function DailyPlan() {
           </span>
         )}
       </div>
-      {error && <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>{error} ✕</div>}
+      {error && <div className="error error-dismiss" onClick={() => setError(null)} title="Скрыть">{error} <X size={12} weight="bold" aria-hidden="true" /></div>}
 
       {/* Suggestions panel after move */}
       {showSuggestions && moveSuggestions.length > 0 && (
@@ -306,7 +307,7 @@ export default function DailyPlan() {
             <strong style={{ fontSize: '0.85rem' }}>
               Освободилось место {moveFreedDate} — что поставить вместо?
             </strong>
-            <button className="btn btn-secondary btn-sm" onClick={() => setShowSuggestions(false)}>✕</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowSuggestions(false)} aria-label="Закрыть"><X size={14} weight="bold" aria-hidden="true" /></button>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {moveSuggestions.map(s => (
@@ -485,7 +486,7 @@ export default function DailyPlan() {
                             {teamName}
                             {capPct < 100 && (
                               <span style={{ marginLeft: 8, color: 'var(--warning)', fontWeight: 700, fontSize: '0.75rem' }}>
-                                ⚠ {capPct}% мощности{cap?.note ? ` — ${cap.note}` : ''}
+                                {capPct}% мощности{cap?.note ? ` — ${cap.note}` : ''}
                               </span>
                             )}
                           </span>
@@ -555,34 +556,34 @@ export default function DailyPlan() {
                                         </select>
                                         <button className="btn btn-primary btn-sm" onClick={() => savePlan(t.id)} disabled={saving}>OK</button>
                                         {' '}
-                                        <button className="btn btn-secondary btn-sm" onClick={() => setEditingPlan(null)}>✕</button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => setEditingPlan(null)}>Отмена</button>
                                       </>
                                     ) : editingFact === t.id ? (
                                       <>
                                         <button className="btn btn-primary btn-sm" onClick={() => saveFact(t.id)} disabled={saving}>OK</button>
                                         {' '}
-                                        <button className="btn btn-secondary btn-sm" onClick={() => setEditingFact(null)}>✕</button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => setEditingFact(null)}>Отмена</button>
                                       </>
                                     ) : movingTask?.id === t.id ? (
                                       <>
                                         <input type="date" value={moveTargetDate} onChange={e => setMoveTargetDate(e.target.value)} style={{ width: 130, marginRight: 4 }} autoFocus />
                                         <button className="btn btn-primary btn-sm" onClick={confirmMove} disabled={saving}>Перенести</button>
                                         {' '}
-                                        <button className="btn btn-secondary btn-sm" onClick={() => setMovingTask(null)}>✕</button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => setMovingTask(null)}>Отмена</button>
                                       </>
                                     ) : splittingTask?.id === t.id ? (
-                                      <button className="btn btn-secondary btn-sm" onClick={() => setSplittingTask(null)}>✕</button>
+                                      <button className="btn btn-secondary btn-sm" onClick={() => setSplittingTask(null)}>Отмена</button>
                                     ) : (
                                       <>
                                         <button className="btn btn-secondary btn-sm" onClick={() => openEditPlan(t)} title="Редактировать план">План</button>
                                         {' '}
                                         <button className="btn btn-primary btn-sm" onClick={() => openEditFact(t)} title="Ввести факт">Факт</button>
                                         {' '}
-                                        <button className="btn btn-secondary btn-sm" onClick={() => openMove(t)} title="Перенести на другую дату">→</button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => openMove(t)} title="Перенести на другую дату">Перенести</button>
                                         {' '}
-                                        <button className="btn btn-secondary btn-sm" onClick={() => openSplit(t)} title="Разбить на части">÷</button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => openSplit(t)} title="Разбить на части">Разбить</button>
                                         {' '}
-                                        <button className="btn btn-danger btn-sm" onClick={() => removeTask(t.id)}>✕</button>
+                                        <button className="btn btn-danger btn-sm" onClick={() => removeTask(t.id)}>Удалить</button>
                                       </>
                                     )}
                                   </td>

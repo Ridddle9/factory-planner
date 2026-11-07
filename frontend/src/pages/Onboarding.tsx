@@ -6,6 +6,8 @@ import { ClipboardText } from '@phosphor-icons/react/dist/csr/ClipboardText'
 import { Lightning } from '@phosphor-icons/react/dist/csr/Lightning'
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/csr/SlidersHorizontal'
 import { useNavigate } from 'react-router-dom'
+import { ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft'
+import { Check } from '@phosphor-icons/react/dist/csr/Check'
 
 function getWorkingDays(n: number): Date[] {
   const result: Date[] = []
@@ -180,7 +182,7 @@ export default function Onboarding() {
                 fontSize: 12, fontWeight: 700,
                 transition: 'background 0.4s',
               }}>
-                {i < progressIdx ? '✓' : i + 1}
+                {i < progressIdx ? <Check size={14} weight="bold" aria-hidden="true" /> : i + 1}
               </div>
               <div style={{ fontSize: 11, marginTop: 5, color: i <= progressIdx ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: i === progressIdx ? 600 : 400 }}>
                 {label}
@@ -339,7 +341,7 @@ export default function Onboarding() {
               onClick={() => setShowChoice(false)}
               style={{ display: 'block', margin: '20px auto 0', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13 }}
             >
-              ← Вернуться к демо
+              <ArrowLeft size={14} aria-hidden="true" style={{ verticalAlign: '-2px' }} /> Вернуться к демо
             </button>
           </div>
         </div>

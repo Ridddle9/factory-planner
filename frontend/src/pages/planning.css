@@ -205,4 +205,14 @@
   .schedule-card > .day-chips { margin: 0 0 12px; padding: 2px 16px 6px; }
   .schedule-card > .day-group { margin: 0 16px 14px; }
   .planning-page .toolbar { padding-bottom: 16px; margin-bottom: 16px; }
+  .planning-page .planning-tabs { flex-wrap: nowrap; gap: 20px; margin-bottom: 16px; overflow-x: auto; scrollbar-width: none; }
+  .planning-page .planning-tabs .tab { flex: none; }
+  .planning-page .planning-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .planning-page .planning-filters > label { min-width: 0; }
+  .planning-page .planning-filters > label > input,
+  .planning-page .planning-filters > label > select { width: 100% !important; min-width: 0; }
+  .planning-page .planning-filters > .btn,
+  .planning-page .planning-filters > label:has(select) { grid-column: 1 / -1; }
+  .planning-submodes { display: flex; margin-bottom: 16px; }
+  .planning-submodes .btn { flex: 1 1 auto; }
 }

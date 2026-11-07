@@ -16,22 +16,26 @@ const SUGGESTIONS = [
 ]
 
 const TOOL_LABELS: Record<string, string> = {
-  find_orders: 'поиск заказов',
-  get_order: 'заказ',
-  team_schedule: 'план бригад',
-  team_load: 'загрузка бригад',
-  find_products: 'товары и нормы',
-  unplanned_items: 'незапланированные позиции',
-  orders_by_finish_date: 'заказы по дате окончания',
-  list_teams: 'список бригад',
+  find_orders: 'Поиск заказов',
+  get_order: 'Заказ',
+  team_schedule: 'План бригад',
+  team_load: 'Загрузка бригад',
+  find_products: 'Товары и нормы',
+  unplanned_items: 'Незапланированные позиции',
+  orders_by_finish_date: 'Заказы по дате окончания',
+  list_teams: 'Список бригад',
 }
 
+// 2026-11-09 → 09.11
+const shortDate = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? `${v.slice(8, 10)}.${v.slice(5, 7)}` : ''
+
+// Источник ответа — что помощник посмотрел в базе, одной подписью для чипа
 function toolLabel(t: ToolUse) {
   const label = TOOL_LABELS[t.name] ?? t.name
   const detail = [t.args.query, t.args.order_number, t.args.team].find(v => typeof v === 'string' && v)
-  const range = typeof t.args.date_from === 'string'
-    ? `${t.args.date_from}${t.args.date_to && t.args.date_to !== t.args.date_from ? ' … ' + t.args.date_to : ''}`
-    : ''
+  const from = shortDate(t.args.date_from)
+  const to = shortDate(t.args.date_to)
+  const range = from ? (to && to !== from ? `${from}–${to}` : from) : ''
   return [label, detail, range].filter(Boolean).join(' · ')
 }
 
@@ -88,6 +92,14 @@ export default function Assistant() {
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
+  // Поле ввода растёт вместе с текстом (до max-height в CSS), без ручки растягивания
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [input])
+
   useEffect(() => {
     try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages)) } catch { /* приватный режим */ }
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -122,7 +134,7 @@ export default function Assistant() {
   }
 
   return (
-    <div className="chat">
+    <div className={messages.length === 0 && !sending ? 'chat chat-is-empty' : 'chat'}>
       <div className="page-header">
         <div>
           <h1 className="page-title">Помощник</h1>
@@ -151,30 +163,35 @@ export default function Assistant() {
               {m.role === 'assistant' && !m.error ? renderReply(m.content) : m.content}
             </div>
             {m.tools && m.tools.length > 0 && (
-              <div className="chat-tools">Смотрел: {m.tools.map(toolLabel).join('; ')}</div>
+              <div className="chat-sources" aria-label="Что помощник посмотрел в базе">
+                {m.tools.map((t, j) => <span key={j} className="chat-source">{toolLabel(t)}</span>)}
+              </div>
             )}
           </div>
         ))}
 
         {sending && (
           <div className="chat-msg chat-msg-assistant">
-            <div className="chat-bubble chat-typing" aria-label="Помощник думает"><span /><span /><span /></div>
+            <div className="chat-thinking" role="status">Смотрю в базе…</div>
           </div>
         )}
         <div ref={endRef} />
       </div>
 
       <form className="chat-input" onSubmit={e => { e.preventDefault(); send(input) }}>
+        <div className="chat-composer">
         <textarea
           ref={inputRef}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder="Задайте вопрос…"
+          aria-label="Вопрос помощнику"
           rows={1}
           maxLength={2000}
         />
-        <button type="submit" className="btn btn-primary" disabled={sending || !input.trim()}>Спросить</button>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={sending || !input.trim()}>Спросить</button>
+        </div>
       </form>
     </div>
   )
