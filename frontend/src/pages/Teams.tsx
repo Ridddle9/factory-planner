@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './list-pages.css'
 import { api } from '../api'
 import type { Team, TeamDayCapacity } from '../types'
 
@@ -168,7 +169,7 @@ export default function Teams() {
   if (loading) return <div className="card">Загрузка...</div>
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
-    padding: '0.5rem 1.25rem',
+    padding: '12px 0',
     fontWeight: 600,
     fontSize: '0.85rem',
     cursor: 'pointer',
@@ -180,23 +181,27 @@ export default function Teams() {
   })
 
   return (
-    <>
-      <div className="page-header">
-        <div><h1 className="page-title">Бригады</h1>
-      <p className="page-description">Состав производства, доступные мощности и рабочие дни.</p></div>
+    <div className="list-page">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Бригады</h1>
+          <p className="page-description">Состав производства, доступные мощности и рабочие дни.</p>
+        </div>
+        {tab === 'teams' && (
+          <div className="page-heading-actions">
+            <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить бригаду</button>
+          </div>
+        )}
       </div>
       {error && <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>{error} ✕</div>}
 
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '1rem' }}>
+      <div className="list-tabs">
         <button style={tabStyle(tab === 'teams')} onClick={() => setTab('teams')}>Список бригад</button>
         <button style={tabStyle(tab === 'capacity')} onClick={() => setTab('capacity')}>Мощности по дням</button>
       </div>
 
       {/* Teams list */}
-      {tab === 'teams' && <div className="card">
-        <div className="toolbar">
-          <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить бригаду</button>
-        </div>
+      {tab === 'teams' && <div className="card list-card">
         {(showForm || editing !== null) && (
           <div className="edit-form">
             <label>Название</label>
@@ -237,15 +242,15 @@ export default function Teams() {
         )}
       </div>}
 
-      {tab === 'capacity' && <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+      {tab === 'capacity' && <div className="card capacity-card">
+        <div className="capacity-heading">
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Мощности бригад по дням</h2>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
             Задайте пониженную мощность, если вышло меньше людей
           </div>
         </div>
 
-        <div className="toolbar" style={{ marginBottom: '0.75rem' }}>
+        <div className="toolbar capacity-dates">
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             С: <input type="date" value={capDateFrom} onChange={e => setCapDateFrom(e.target.value)} />
           </label>
@@ -262,8 +267,8 @@ export default function Teams() {
           <>
             {/* Overrides table */}
             {overrides.length > 0 && (
-              <div style={{ marginBottom: '1rem' }}>
-                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
+              <div className="capacity-overrides">
+                <div className="capacity-section-label">
                   Активные корректировки
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
@@ -304,7 +309,7 @@ export default function Teams() {
             )}
 
             {/* Grid: add new overrides */}
-            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
+            <div className="capacity-section-label">
               Добавить / изменить
             </div>
             <div style={{ overflowX: 'auto' }}>
@@ -366,11 +371,11 @@ export default function Teams() {
                                 <input
                                   type="text" placeholder="Причина" value={capNote}
                                   onChange={e => setCapNote(e.target.value)}
-                                  style={{ width: '100%', fontSize: '0.68rem', padding: '1px 3px' }}
+                                  style={{ width: '100%', fontSize: '0.75rem', padding: '1px 3px' }}
                                 />
                                 <div style={{ display: 'flex', gap: 2 }}>
-                                  <button className="btn btn-primary btn-sm" style={{ flex: 1, padding: '1px 4px', fontSize: '0.68rem' }} onClick={() => saveCapacity(team.id, d)}>OK</button>
-                                  <button className="btn btn-secondary btn-sm" style={{ flex: 1, padding: '1px 4px', fontSize: '0.68rem' }} onClick={() => setCapEditing(null)}>✕</button>
+                                  <button className="btn btn-primary btn-sm" style={{ flex: 1, padding: '1px 4px', fontSize: '0.75rem' }} onClick={() => saveCapacity(team.id, d)}>OK</button>
+                                  <button className="btn btn-secondary btn-sm" style={{ flex: 1, padding: '1px 4px', fontSize: '0.75rem' }} onClick={() => setCapEditing(null)}>✕</button>
                                 </div>
                               </div>
                             ) : (
@@ -387,7 +392,7 @@ export default function Teams() {
                                     {pct}%
                                   </span>
                                 ) : (
-                                  <span style={{ fontSize: '0.65rem', color: '#cbd5e1' }}>—</span>
+                                  <span style={{ fontSize: '0.75rem', color: '#cbd5e1' }}>—</span>
                                 )}
                               </div>
                             )}
@@ -437,6 +442,6 @@ export default function Teams() {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }

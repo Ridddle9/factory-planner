@@ -552,36 +552,44 @@ export default function Schedule() {
 
   return (
     <div className="schedule-page">
-      <div className="schedule-heading">
-        <h1 className="page-title">График производства</h1>
-        <p className="planning-description">Задачи, сроки и загрузка бригад в едином плане.</p>
+      <div className="page-heading schedule-heading">
+        <div>
+          <h1 className="page-title">График производства</h1>
+          <p className="planning-description">Задачи, сроки и загрузка бригад в едином плане.</p>
+        </div>
+        <div className="page-heading-actions">
+          <button type="button" className="btn btn-secondary" onClick={() => setShowExport(v => !v)}>
+            {showExport ? 'Скрыть экспорт' : 'Скачать Excel'}
+          </button>
+          <button type="button" className="btn btn-primary" onClick={planUnplanned} disabled={planningUnplanned || replanning || saving}>
+            {planningUnplanned ? 'Планирую...' : 'Запланировать незапланированные'}
+          </button>
+        </div>
       </div>
       <div className="schedule-actions">
-        <button className="btn btn-secondary btn-sm" onClick={handleRollover} disabled={rollingOver || saving}>
-          {rollingOver ? 'Переношу...' : 'Перенести недодел со вчера'}
-        </button>
-        <button type="button" className="btn btn-primary btn-sm" onClick={planUnplanned} disabled={planningUnplanned || replanning || saving}>
-          {planningUnplanned ? 'Планирую...' : 'Запланировать незапланированные'}
-        </button>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={replanQueue} disabled={replanning || planningUnplanned || saving}>
-          {replanning ? 'Перепланирую...' : 'Перепланировать очередь'}
-        </button>
-        <button type="button" className="btn btn-danger btn-sm" onClick={handleClearSchedule} disabled={saving || planningUnplanned || replanning}>
+        <div className="schedule-action-group">
+          <button className="btn btn-secondary btn-sm" onClick={handleRollover} disabled={rollingOver || saving}>
+            {rollingOver ? 'Переношу...' : 'Перенести недодел со вчера'}
+          </button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={replanQueue} disabled={replanning || planningUnplanned || saving}>
+            {replanning ? 'Перепланирую...' : 'Перепланировать очередь'}
+          </button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={fetchNoTeamCategories} disabled={loadingNoTeam}>
+            {loadingNoTeam ? 'Загрузка...' : noTeamCategories !== null ? 'Скрыть список' : 'Категории без бригад'}
+          </button>
+        </div>
+        <button type="button" className="btn btn-danger btn-sm schedule-clear" onClick={handleClearSchedule} disabled={saving || planningUnplanned || replanning}>
           Очистить график
         </button>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={fetchNoTeamCategories} disabled={loadingNoTeam}>
-          {loadingNoTeam ? 'Загрузка...' : noTeamCategories !== null ? 'Скрыть список' : 'Категории без бригад'}
-        </button>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowExport(v => !v)}>
-          {showExport ? 'Скрыть экспорт' : 'Скачать Excel'}
-        </button>
-        {undoAction && (
+      </div>
+      {undoAction && (
+        <div className="schedule-undo">
           <button className="btn btn-secondary btn-sm" onClick={handleUndo} disabled={saving}
             style={{ borderColor: 'var(--warning)', color: 'var(--warning)' }}>
             ↩ Отменить: {undoAction.label}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {showExport && (
         <div style={{ marginBottom: 10, padding: '10px 14px', borderRadius: 8, fontSize: '0.875rem',
@@ -718,49 +726,38 @@ export default function Schedule() {
       )}
 
       <div className="card schedule-card">
-        <div className="toolbar schedule-filters">
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            С: <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            По: <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Участок:
-            <select value={workshopId} onChange={e => setWorkshopId(e.target.value)}>
-              <option value="">— все —</option>
-              {workshops.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Бригада:
-            <select value={teamId} onChange={e => setTeamId(e.target.value)}>
-              <option value="">— все —</option>
-              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Заказ:
-            <select value={orderId} onChange={e => setOrderId(e.target.value)}>
-              <option value="">— все —</option>
-              {orders.map(o => <option key={o.id} value={o.id}>{o.orderNumber}</option>)}
-            </select>
-          </label>
-        </div>
-
-        <div className="schedule-legend">
-          {[
-            { bg: 'var(--plan-scheduled)', border: 'var(--plan-scheduled-border)', label: 'Запланировано' },
-            { bg: 'var(--success-light)', border: 'var(--plan-success-border)', label: 'Выполнено' },
-            { bg: 'var(--warning-light)', border: 'var(--plan-warning-border)', label: 'Частично' },
-            { bg: 'var(--danger-light)', border: 'var(--plan-danger-border)', label: 'Просрочено' },
-          ].map(({ bg, border, label }) => (
-            <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ display: 'inline-block', width: 12, height: 12, background: bg, border: `1px solid ${border}`, borderRadius: 2 }} />
-              {label}
-            </span>
-          ))}
-          <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>· Кликните ячейку для редактирования</span>
+        <div className="schedule-filters">
+          <div className="schedule-date-filters">
+            <label>
+              С: <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            </label>
+            <label>
+              По: <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            </label>
+          </div>
+          <div className="schedule-entity-filters">
+            <label>
+              Участок:
+              <select value={workshopId} onChange={e => setWorkshopId(e.target.value)}>
+                <option value="">— все —</option>
+                {workshops.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </label>
+            <label>
+              Бригада:
+              <select value={teamId} onChange={e => setTeamId(e.target.value)}>
+                <option value="">— все —</option>
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </label>
+            <label>
+              Заказ:
+              <select value={orderId} onChange={e => setOrderId(e.target.value)}>
+                <option value="">— все —</option>
+                {orders.map(o => <option key={o.id} value={o.id}>{o.orderNumber}</option>)}
+              </select>
+            </label>
+          </div>
         </div>
 
         {loading ? (
@@ -800,9 +797,9 @@ export default function Schedule() {
                           color: d === today ? 'var(--primary)' : isWeekend(d) ? 'var(--text-muted)' : HEADER_COLOR,
                           padding: '4px 2px', textAlign: 'center',
                           borderRight: '1px solid var(--border)',
-                          fontWeight: d === today ? 700 : 400,
+                          fontWeight: d === today ? 600 : 400,
                         }}>
-                        <div style={{ fontSize: '0.68rem', opacity: 0.75 }}>{formatDayOfWeek(d)}</div>
+                        <div style={{ fontSize: '0.75rem', opacity: 0.75 }}>{formatDayOfWeek(d)}</div>
                         <div style={{ fontSize: '0.78rem' }}>{formatDateShort(d)}</div>
                         {barW > 0 && (
                           <div style={{ margin: '2px 4px 0', height: 3, borderRadius: 2, background: 'var(--border)' }}>
@@ -871,7 +868,7 @@ export default function Schedule() {
                           <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={row.orderNumber}>
                             {row.orderNumber}
                           </div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={`${row.productCode} — ${row.productName}`}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={`${row.productCode} — ${row.productName}`}>
                             {row.productName || row.productCode}
                           </div>
                         </td>
@@ -902,12 +899,12 @@ export default function Schedule() {
                                 <>
                                   <div style={{ fontWeight: 600, lineHeight: 1.4 }}>{cell.plannedQuantity}</div>
                                   {cell.actualQuantity !== null && (
-                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>✓{cell.actualQuantity}</div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>✓{cell.actualQuantity}</div>
                                   )}
                                 </>
                               )}
                               {isValidTarget && !cell && (
-                                <div style={{ fontSize: '0.7rem', color: 'var(--primary)', lineHeight: 1 }}>+</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--primary)', lineHeight: 1 }}>+</div>
                               )}
                             </td>
                           )
@@ -923,8 +920,23 @@ export default function Schedule() {
           </div>
         )}
 
+        <div className="schedule-legend">
+          {[
+            { bg: 'var(--plan-scheduled)', border: 'var(--plan-scheduled-border)', label: 'Запланировано' },
+            { bg: 'var(--success-light)', border: 'var(--plan-success-border)', label: 'Выполнено' },
+            { bg: 'var(--warning-light)', border: 'var(--plan-warning-border)', label: 'Частично' },
+            { bg: 'var(--danger-light)', border: 'var(--plan-danger-border)', label: 'Просрочено' },
+          ].map(({ bg, border, label }) => (
+            <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ display: 'inline-block', width: 12, height: 12, background: bg, border: `1px solid ${border}`, borderRadius: 2 }} />
+              {label}
+            </span>
+          ))}
+          <span className="schedule-help">Кликните ячейку для редактирования</span>
+        </div>
+
         {!loading && rows.length > 0 && (
-          <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+          <div className="schedule-summary">
             {rows.length} позиций · {dates.length} дней
           </div>
         )}
@@ -953,7 +965,7 @@ export default function Schedule() {
             return (
               <div key={t.teamName} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '2px 0' }}>
                 <span style={{ opacity: 0.8 }}>{t.teamName}</span>
-                <span style={{ fontWeight: 700, color: over ? 'var(--danger)' : warn ? 'var(--warning)' : 'var(--success)' }}>
+                <span style={{ fontWeight: 600, color: over ? 'var(--danger)' : warn ? 'var(--warning)' : 'var(--success)' }}>
                   {t.loadPct}%
                 </span>
               </div>
@@ -987,7 +999,7 @@ export default function Schedule() {
           {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
             <div>
-              <div style={{ fontWeight: 700 }}>
+              <div style={{ fontWeight: 600 }}>
                 {rows.find(r => r.orderItemId === popup.rowId)?.productCode ?? ''}
               </div>
               <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>

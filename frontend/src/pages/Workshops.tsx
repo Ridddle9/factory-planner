@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './list-pages.css'
 import { api } from '../api'
 import type { Workshop } from '../types'
 
@@ -71,14 +72,18 @@ export default function Workshops() {
   if (loading) return <div className="card">Загрузка...</div>
 
   return (
-    <>
-      <h1 className="page-title">Участки</h1>
-      <p className="page-description">Производственные участки вашей компании.</p>
-      {error && <div className="error">{error}</div>}
-      <div className="card">
-        <div className="toolbar">
+    <div className="list-page">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Участки</h1>
+          <p className="page-description">Производственные участки вашей компании.</p>
+        </div>
+        <div className="page-heading-actions">
           <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить участок</button>
         </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="card list-card">
         {(showForm || editing !== null) && (
           <div className="edit-form">
             <label>Название</label>
@@ -116,6 +121,6 @@ export default function Workshops() {
           </table>
         )}
       </div>
-    </>
+    </div>
   )
 }

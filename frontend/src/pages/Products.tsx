@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './list-pages.css'
 import { api } from '../api'
 import type { Product, ProductCategory, ProductTeamCapacity } from '../types'
 
@@ -90,15 +91,22 @@ export default function Products() {
   if (loading) return <div className="card">Загрузка...</div>
 
   return (
-    <>
-      <h1 className="page-title">Товары</h1>
-      <p className="page-description">Номенклатура и производительность по каждому товару.</p>
-      {error && <div className="error">{error}</div>}
-      <div className="card">
-        <div className="toolbar">
+    <div className="list-page">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Товары</h1>
+          <p className="page-description">Номенклатура и производительность по каждому товару.</p>
+        </div>
+        <div className="page-heading-actions">
           <button type="button" className="btn btn-primary" onClick={openCreate} disabled={categories.length === 0}>Добавить товар</button>
+        </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="card list-card">
+        <div className="list-toolbar">
           <input
-            style={{ marginLeft: 8, padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.875rem' }}
+            className="list-search"
+            aria-label="Поиск по коду или названию"
             placeholder="Поиск по коду / названию"
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -106,7 +114,7 @@ export default function Products() {
         </div>
 
         {(showForm || editing !== null) && (
-          <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
+          <div className="edit-form">
             <label>Код</label>
             <input value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="Код" />
             <label>Название</label>
@@ -120,7 +128,7 @@ export default function Products() {
             </select>
             <label>
               Произв. на 1 человека/день
-              <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6, fontSize: '0.82rem' }}>
+              <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
                 (оставьте пустым — возьмёт из 1С)
               </span>
             </label>
@@ -233,6 +241,6 @@ export default function Products() {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }

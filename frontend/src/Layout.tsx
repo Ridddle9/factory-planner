@@ -48,13 +48,9 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
       <nav className="nav" aria-label="Основная навигация">
         <div className="nav-logo">
           <div>
-            <div className="nav-wordmark">Factory Planner<span className="wordmark-period">.</span></div>
+            <div className="nav-wordmark">Фабрика планер<span className="wordmark-period">.</span></div>
             <span>Планирование производства</span>
           </div>
-        </div>
-        <div className="nav-workspace">
-          <span className="workspace-caption">Компания</span>
-          <strong title={user?.company.name}>{user?.company.name}</strong>
         </div>
         <ul>
           {sections.map(section => (
@@ -77,16 +73,19 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
             </li>
           ))}
         </ul>
-        <div className="nav-account">
-          <div className="account-avatar" aria-hidden="true">{user?.email.slice(0, 1).toUpperCase()}</div>
-          <div className="account-info"><strong title={user?.email}>{user?.email}</strong><span>{user?.role === 'ADMIN' ? 'Администратор' : 'Сотрудник'}</span></div>
-          <button className="account-logout" onClick={handleLogout} title="Выйти" aria-label="Выйти"><SignOut size={18} /></button>
+        <div className="nav-workspace">
+          <span className="workspace-caption">Компания</span>
+          <strong title={user?.company.name}>{user?.company.name}</strong>
         </div>
       </nav>
       <div className="workspace-main">
         <header className="workspace-header">
           <div className="workspace-breadcrumb"><span>{activeSection?.title ?? (pathname.startsWith('/admin') ? 'Управление' : 'Справочники')}</span><CaretRight size={12} aria-hidden="true" /><strong>{currentPage}</strong></div>
-          <span className="workspace-context">Производственный учёт</span>
+          <div className="workspace-account">
+            <div className="account-avatar" aria-hidden="true">{user?.email.slice(0, 1).toUpperCase()}</div>
+            <div className="account-info"><strong title={user?.email}>{user?.email}</strong><span>{user?.role === 'ADMIN' ? 'Администратор' : 'Сотрудник'}</span></div>
+            <button className="account-logout" onClick={handleLogout} title="Выйти" aria-label="Выйти"><SignOut size={18} /></button>
+          </div>
         </header>
         <main className="main" id="main-content" tabIndex={-1}>
           {children ?? <Outlet />}

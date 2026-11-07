@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './list-pages.css'
 import { api } from '../api'
 import type { CategoryBlock, ProductCategory, Team, Workshop } from '../types'
 
@@ -176,16 +177,18 @@ export default function Categories() {
   if (loading) return <div className="card">Загрузка...</div>
 
   return (
-    <>
-      <h1 className="page-title">Категории номенклатуры</h1>
-      <p className="page-description">Категории продукции, мощности и привязка к бригадам.</p>
-      {error && <div className="error">{error}</div>}
-      <div className="card">
-        <div className="toolbar">
-          <button type="button" className="btn btn-primary" onClick={openCreate} disabled={workshops.length === 0}>
-            Добавить категорию
-          </button>
+    <div className="list-page">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Категории номенклатуры</h1>
+          <p className="page-description">Категории продукции, мощности и привязка к бригадам.</p>
         </div>
+        <div className="page-heading-actions">
+          <button type="button" className="btn btn-primary" onClick={openCreate} disabled={workshops.length === 0}>Добавить категорию</button>
+        </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="card list-card">
         {(showForm || editing !== null) && (
           <div className="edit-form">
             <label>Название</label>
@@ -334,6 +337,6 @@ export default function Categories() {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }

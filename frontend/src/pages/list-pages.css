@@ -1,0 +1,137 @@
+/* Shared reading edges keep page actions, filters and rows easy to scan. */
+.list-page .list-card {
+  padding: 0;
+  overflow-x: auto;
+}
+
+.list-page .list-card > table {
+  width: 100%;
+}
+
+.list-page .list-card > table > thead > tr > th:first-child,
+.list-page .list-card > table > tbody > tr > td:first-child {
+  padding-left: 24px;
+}
+
+.list-page .list-card > table > thead > tr > th:last-child,
+.list-page .list-card > table > tbody > tr > td:last-child {
+  padding-right: 24px;
+}
+
+.list-page .list-card > table > tbody > tr > td:last-child:has(> .btn) {
+  text-align: right;
+}
+
+.list-page .list-card > table > tbody > tr:last-child > td {
+  border-bottom: 0;
+}
+
+.list-page .list-card > .empty {
+  padding: 48px 24px;
+}
+
+.list-page .list-card > .edit-form {
+  grid-template-columns: minmax(160px, 220px) minmax(180px, 460px);
+  gap: 16px 24px;
+  margin: 24px;
+  padding: 0 0 24px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.list-page .edit-form > label > span {
+  display: block;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+.list-page .edit-form > input,
+.list-page .edit-form > select,
+.list-page .edit-form > textarea {
+  min-width: 0;
+  width: 100%;
+}
+
+.list-page .list-tabs {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+.list-page .list-tabs-inset {
+  padding: 0 24px;
+  margin-bottom: 0;
+}
+
+.list-page .list-tabs > button {
+  white-space: nowrap;
+}
+
+.list-page .list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.list-page .list-search {
+  width: 360px;
+  max-width: 100%;
+}
+
+.list-page .capacity-card {
+  padding: 24px;
+}
+
+.list-page .capacity-heading {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.list-page .capacity-dates {
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.list-page .capacity-overrides {
+  margin-bottom: 32px;
+}
+
+.list-page .capacity-section-label {
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+@media (max-width: 700px) {
+  .list-page .list-card > .edit-form {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin: 16px;
+    padding-bottom: 20px;
+  }
+
+  .list-page .list-card > table > thead > tr > th:first-child,
+  .list-page .list-card > table > tbody > tr > td:first-child {
+    padding-left: 16px;
+  }
+
+  .list-page .list-card > table > thead > tr > th:last-child,
+  .list-page .list-card > table > tbody > tr > td:last-child {
+    padding-right: 16px;
+  }
+
+  .list-page .list-tabs-inset,
+  .list-page .list-toolbar,
+  .list-page .capacity-card {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

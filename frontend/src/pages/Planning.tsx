@@ -232,7 +232,7 @@ export default function Planning() {
 
   return (
     <div className="planning-page">
-      <div className="page-header">
+      <div className="page-heading">
         <div>
           <h1 className="page-title">Аналитика планирования</h1>
           <p className="planning-description">План, фактический выпуск и доступные мощности.</p>
@@ -241,28 +241,51 @@ export default function Planning() {
 
       {error && <div className="error">{error}</div>}
 
-      <div className="card planning-card">
-        {/* Табы */}
-        <div className="tabs" style={{ marginBottom: '1.25rem' }}>
-          {([
-            ['team-load',         'Загрузка бригады'],
-            ['orders-completion', 'Завершение заказов'],
-            ['fact-day',          'Факт за день'],
-            ['unplanned',         'Незапланированный факт'],
-          ] as [Tab, string][]).map(([t, label]) => (
-            <button key={t} type="button" className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-              {label}
-              {t === 'unplanned' && unplannedData && unplannedData.count > 0 && (
-                <span className="badge badge-warning" style={{ marginLeft: 6 }}>{unplannedData.count}</span>
-              )}
-            </button>
-          ))}
-        </div>
+      {/* Табы */}
+      <div className="tabs planning-tabs">
+        {([
+          ['team-load',         'Загрузка бригады'],
+          ['orders-completion', 'Завершение заказов'],
+          ['fact-day',          'Факт за день'],
+          ['unplanned',         'Незапланированный факт'],
+        ] as [Tab, string][]).map(([t, label]) => (
+          <button key={t} type="button" className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+            {label}
+            {t === 'unplanned' && unplannedData && unplannedData.count > 0 && (
+              <span className="badge badge-warning" style={{ marginLeft: 6 }}>{unplannedData.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
 
+      <div className="card planning-card">
         {/* ── ЗАГРУЗКА БРИГАДЫ (+ перегрузка / недогрузка) ── */}
         {tab === 'team-load' && (
           <>
-            <div className="toolbar">
+            <div className="planning-submodes">
+              <button
+                type="button"
+                className={`btn btn-sm ${subMode === 'brigade' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setSubMode('brigade')}
+              >По бригаде</button>
+              <button
+                type="button"
+                className={`btn btn-sm ${subMode === 'overload' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setSubMode('overload')}
+              >
+                Перегруженные
+                {overloadTasks.length > 0 && subMode !== 'overload' && (
+                  <span className="badge badge-danger" style={{ marginLeft: 5 }}>{overloadTasks.length}</span>
+                )}
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${subMode === 'underload' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setSubMode('underload')}
+              >Недогруженные</button>
+            </div>
+
+            <div className="toolbar planning-filters">
               {subMode === 'brigade' && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   Бригада:
@@ -278,28 +301,6 @@ export default function Planning() {
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 По: <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
               </label>
-              <div className="planning-submodes">
-                <button
-                  type="button"
-                  className={`btn btn-sm ${subMode === 'brigade' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setSubMode('brigade')}
-                >По бригаде</button>
-                <button
-                  type="button"
-                  className={`btn btn-sm ${subMode === 'overload' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setSubMode('overload')}
-                >
-                  Перегруженные
-                  {overloadTasks.length > 0 && subMode !== 'overload' && (
-                    <span className="badge badge-danger" style={{ marginLeft: 5 }}>{overloadTasks.length}</span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className={`btn btn-sm ${subMode === 'underload' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setSubMode('underload')}
-                >Недогруженные</button>
-              </div>
               {loading && <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Загрузка…</span>}
             </div>
 
@@ -310,7 +311,7 @@ export default function Planning() {
                 {teamId && !loading && !teamLoad && <div className="empty">Нет данных.</div>}
                 {teamLoad && teamLoadMatrix && (
                   <>
-                    <h3 style={{ margin: '0 0 0.75rem', fontWeight: 700 }}>{teamLoad.teamName}</h3>
+                    <h3 style={{ margin: '0 0 0.75rem', fontWeight: 600 }}>{teamLoad.teamName}</h3>
                     {teamLoadMatrix.length === 0 ? (
                       <div className="empty">Нет задач за период.</div>
                     ) : (
@@ -332,7 +333,7 @@ export default function Planning() {
                                   background: isWeekend(d) ? 'var(--plan-weekend)' : HEADER_BG, color: isWeekend(d) ? 'var(--text-secondary)' : HEADER_COLOR,
                                   padding: '4px 2px', textAlign: 'center', borderRight: '1px solid var(--border)',
                                 }}>
-                                  <div style={{ fontSize: '0.7rem', opacity: 0.7 }}>{new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
+                                  <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
                                   <div style={{ fontSize: '0.75rem' }}>{formatDate(d)}</div>
                                 </th>
                               ))}
@@ -357,8 +358,8 @@ export default function Planning() {
                                   return (
                                     <td key={d} style={{ textAlign: 'center', padding: '3px 2px', borderRight: '1px solid var(--border)', background: bg }}
                                       title={`${cell.planned} / ${cell.capacity} (${pct.toFixed(0)}%)`}>
-                                      <div style={{ fontWeight: 700, fontSize: '0.82rem', color: col }}>{cell.planned}</div>
-                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{pct.toFixed(0)}%</div>
+                                      <div style={{ fontWeight: 600, fontSize: '0.82rem', color: col }}>{cell.planned}</div>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{pct.toFixed(0)}%</div>
                                     </td>
                                   )
                                 })}
@@ -386,7 +387,7 @@ export default function Planning() {
                         background: 'var(--danger-light)', border: '1px solid var(--plan-danger-border)',
                         borderRadius: '6px 6px 0 0', padding: '6px 12px',
                       }}>
-                        <span style={{ fontWeight: 700 }}>{group.orderNumber}</span>
+                        <span style={{ fontWeight: 600 }}>{group.orderNumber}</span>
                         <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: 'var(--text-muted)' }}>{group.tasks.length} задач</span>
                       </div>
                       <table style={{ width: '100%', borderCollapse: 'collapse', borderTop: 'none' }}>
@@ -430,7 +431,7 @@ export default function Planning() {
                           background: 'var(--plan-header)', color: HEADER_COLOR,
                           borderRadius: '6px 6px 0 0', padding: '6px 12px',
                         }}>
-                          <span style={{ fontWeight: 700 }}>{group.teamName}</span>
+                          <span style={{ fontWeight: 600 }}>{group.teamName}</span>
                           <span style={{ fontSize: '0.78rem', opacity: 0.75 }}>
                             {group.days.length} дн. · ср. загрузка: {avgUtil.toFixed(0)}%
                           </span>
@@ -519,7 +520,7 @@ export default function Planning() {
 
                     return (
                       <tr key={ord.orderId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
-                        <td style={{ padding: '8px 12px', fontWeight: 700 }}>{ord.orderNumber}</td>
+                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>{ord.orderNumber}</td>
                         <td style={{ padding: '8px 12px', fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ord.customer}>{ord.customer}</td>
                         <td style={{ padding: '8px 12px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{ord.manager ?? '—'}</td>
                         <td style={{ padding: '8px 12px', fontSize: '0.82rem' }}>{ord.approvedAt ? formatDate(ord.approvedAt) : '—'}</td>
@@ -533,7 +534,7 @@ export default function Planning() {
                             <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${plannedPct}%`, background: 'var(--plan-scheduled-border)', borderRadius: 5 }} />
                             <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${donePct}%`, background: 'var(--success)', borderRadius: 5 }} />
                           </div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2, display: 'flex', justifyContent: 'space-between' }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2, display: 'flex', justifyContent: 'space-between' }}>
                             <span>план {ord.totalPlanned} · факт <span style={{ color: 'var(--success)', fontWeight: 600 }}>{ord.totalProduced}</span> / {ord.totalQuantity}</span>
                             {ord.unplannedItems > 0 && <span style={{ color: 'var(--danger)' }}>{ord.unplannedItems} не в плане</span>}
                           </div>
@@ -611,14 +612,14 @@ export default function Planning() {
                   <tbody>
                     {unplannedData.items.map((item, i) => (
                       <tr key={item.taskId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
-                        <td style={{ padding: '7px 12px', fontWeight: 700 }}>{item.orderNumber}</td>
+                        <td style={{ padding: '7px 12px', fontWeight: 600 }}>{item.orderNumber}</td>
                         <td style={{ padding: '7px 12px', fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.customer}>{item.customer}</td>
                         <td style={{ padding: '7px 12px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{item.categoryName ?? '—'}</td>
                         <td style={{ padding: '7px 12px', fontSize: '0.82rem' }}>
                           <span style={{ fontWeight: 600 }}>{item.productCode}</span>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 1 }}>{item.productName}</div>
                         </td>
-                        <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--warning)' }}>
+                        <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--warning)' }}>
                           {item.actualQuantity.toLocaleString('ru-RU')}
                         </td>
                       </tr>
@@ -660,8 +661,8 @@ export default function Planning() {
                   background: HEADER_BG, color: HEADER_COLOR,
                   borderRadius: '6px 6px 0 0', padding: '6px 12px',
                 }}>
-                  <span style={{ fontWeight: 700 }}>{team.teamName}</span>
-                  <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: '0.9rem' }}>
+                  <span style={{ fontWeight: 600 }}>{team.teamName}</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 600, fontSize: '0.9rem' }}>
                     {team.totalActual.toLocaleString('ru-RU')} шт.
                   </span>
                 </div>
@@ -678,7 +679,7 @@ export default function Planning() {
                       <tr key={cat.categoryId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
                         <td style={{ padding: '6px 12px', fontWeight: 500 }}>{cat.categoryName}</td>
                         <td style={{ padding: '6px 12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.82rem' }}>{cat.items}</td>
-                        <td style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>
+                        <td style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--success)' }}>
                           {cat.actual.toLocaleString('ru-RU')}
                         </td>
                       </tr>
