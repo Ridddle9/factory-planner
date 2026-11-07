@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { PrismaClient } from "@prisma/client";
 import multer from "multer";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
@@ -4549,10 +4550,9 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
 
   const isoDate = (d: Date) => d.toISOString().slice(0, 10);
   const fmtShort = (iso: string) => `${iso.slice(8)}.${iso.slice(5, 7)}`;
-  // Даты в базе — полночь UTC; в Excel — порядковым номером дня (без часового пояса), формат задаётся ячейке
-  const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
+  // Даты в базе — полночь UTC; ExcelJS пишет Date по UTC, так что в Excel будет ровно этот день
   const excelDate = (d: Date | null | undefined) =>
-    d ? Math.round((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - EXCEL_EPOCH_MS) / 86400000) : null;
+    d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : null;
 
   type Row = {
     item: (typeof tasks)[number]["orderItem"];
@@ -4583,15 +4583,36 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
     a.item.id.localeCompare(b.item.id) || // строки одного заказа — в порядке строк заказа (id растёт по мере создания)
     a.teamName.localeCompare(b.teamName));
 
-  const HEAD = [
-    "Заказ", "Артикул", "Товар", "Штрихкод номенклатуры", "Категория", "Клиент", "Приоритет",
-    "Дата передачи", "Бригада", "Информация для производства", "Итого план",
+  // Колонки и ширины — как в образце export_to_be.xlsx
+  const HEAD: { title: string; width: number }[] = [
+    { title: "Заказ", width: 21 },
+    { title: "Артикул", width: 19 },
+    { title: "Товар", width: 44 },
+    { title: "Штрихкод номенклатуры", width: 22 },
+    { title: "Категория", width: 22 },
+    { title: "Клиент", width: 25 },
+    { title: "Приоритет", width: 13 },
+    { title: "Дата передачи", width: 12 },
+    { title: "Бригада", width: 15 },
+    { title: "Информация для производства", width: 30 },
+    { title: "Итого план", width: 10 },
   ];
-  const aoa: (string | number | null)[][] = [[...HEAD, ...isoDates.map(fmtShort)]];
+  const DAY_WIDTH = 8;
+  const fixedCount = HEAD.length;
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("План производства", { views: [{ state: "frozen", ySplit: 1 }] });
+  ws.columns = [
+    ...HEAD.map(h => ({ width: h.width })),
+    ...isoDates.map(() => ({ width: DAY_WIDTH })),
+  ];
+  const widths = [...HEAD.map(h => h.width), ...isoDates.map(() => DAY_WIDTH)];
+
+  ws.addRow([...HEAD.map(h => h.title), ...isoDates.map(fmtShort)]);
   for (const r of sorted) {
     const { item } = r;
     const totalPlan = Array.from(r.byDate.values()).reduce((s, v) => s + v, 0);
-    aoa.push([
+    ws.addRow([
       item.order.orderNumber,
       item.product.code,
       item.product.name,
@@ -4607,44 +4628,54 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
     ]);
   }
 
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const transferCol = HEAD.indexOf("Дата передачи");
-  for (let r = 1; r < aoa.length; r++) {
-    const cell = ws[XLSX.utils.encode_cell({ r, c: transferCol })];
-    if (cell) cell.z = "dd.mm.yyyy";
-  }
-  ws["!cols"] = [
-    { wch: 14 }, { wch: 18 }, { wch: 44 }, { wch: 20 }, { wch: 22 }, { wch: 26 }, { wch: 12 },
-    { wch: 13 }, { wch: 14 }, { wch: 30 }, { wch: 11 },
-    ...isoDates.map(() => ({ wch: 7 })),
-  ];
-  // Фильтры в шапке
-  ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: aoa[0]!.length - 1 } }) };
+  // Оформление как в образце: шапка — белый текст на сером (50%), строки чередуются белая / светло-серая,
+  // тонкие белые границы, Calibri 12, перенос текста во всех ячейках
+  const FONT = { name: "Calibri", size: 12 };
+  const WHITE_BORDER = { style: "thin" as const, color: { argb: "FFFFFFFF" } };
+  const border = { top: WHITE_BORDER, left: WHITE_BORDER, bottom: WHITE_BORDER, right: WHITE_BORDER };
+  const fill = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
+  const HEADER_FILL = fill("FF7F7F7F");
+  const STRIPE_FILL = fill("FFF2F2F2");
+  const LINE_HEIGHT = 15.6; // строка текста Calibri 12, пт
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "План производства");
+  // Excel сам не подбирает высоту строк с переносом в файле, сгенерированном программой — считаем:
+  // слова раскладываются по строкам ширины колонки (символов в строке ≈ ширина колонки, шрифт 12 чуть шире 11)
+  const linesFor = (value: unknown, width: number) => {
+    if (typeof value !== "string" || value === "") return 1; // числа и даты — в одну строку
+    const perLine = Math.max(1, Math.floor(width * 0.9) - 1);
+    let lines = 1, used = 0;
+    for (const word of String(value).split(/\s+/)) {
+      const len = word.length;
+      if (used === 0) used = len;
+      else if (used + 1 + len <= perLine) used += 1 + len;
+      else { lines++; used = len; }
+      while (used > perLine) { lines++; used -= perLine; }
+    }
+    return lines;
+  };
 
-  const buf = freezeHeaderRow(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+  ws.eachRow((row, rowNumber) => {
+    const isHeader = rowNumber === 1;
+    let lines = 1;
+    for (let c = 1; c <= widths.length; c++) {
+      const cell = row.getCell(c);
+      cell.font = isHeader ? { ...FONT, bold: c <= fixedCount - 1, color: { argb: "FFFFFFFF" } } : FONT;
+      cell.border = border;
+      cell.alignment = { wrapText: true };
+      if (isHeader) cell.fill = HEADER_FILL;
+      else if (rowNumber % 2 === 1) cell.fill = STRIPE_FILL;
+      if (!isHeader && c === fixedCount - 3) cell.numFmt = "dd.mm.yyyy"; // Дата передачи
+      if (c <= fixedCount) lines = Math.max(lines, linesFor(cell.value, widths[c - 1]!));
+    }
+    row.height = Math.max(2, lines) * LINE_HEIGHT;
+  });
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: widths.length } };
+
+  const buf = await wb.xlsx.writeBuffer();
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", 'attachment; filename="plan.xlsx"');
-  res.send(buf);
+  res.send(Buffer.from(buf as ArrayBuffer));
 });
-
-// Закрепить строку заголовков первого листа. SheetJS 0.18 не пишет закрепление, поэтому
-// дописываем <pane> в разметку листа внутри готового файла (xlsx — это zip)
-function freezeHeaderRow(buf: Buffer): Buffer {
-  const zip = XLSX.CFB.read(buf, { type: "buffer" });
-  const entry = XLSX.CFB.find(zip, "/xl/worksheets/sheet1.xml");
-  if (!entry?.content) return buf;
-  const xml = Buffer.from(entry.content as Uint8Array).toString("utf8");
-  const frozen = xml.replace(
-    /<sheetView([^>]*?)\/>/,
-    '<sheetView$1><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView>',
-  );
-  if (frozen === xml) return buf;
-  entry.content = Buffer.from(frozen, "utf8");
-  return XLSX.CFB.write(zip, { fileType: "zip", type: "buffer", compression: true }) as Buffer;
-}
 
 app.post("/planning/replan-queue", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
