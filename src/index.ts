@@ -1124,7 +1124,7 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
 
   // fact из 1С (остаток «Не обеспечен» по своему запросу) больше не используется — факт считается по позициям заказов
   const { orders, categories, teams, teamCategories, capacity } = req.body as {
-    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; comment?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number; transferDate?: string; barcode?: string }[] }[];
+    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; productionInfo?: string; comment?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number; transferDate?: string; barcode?: string }[] }[];
     categories: { code: string; name: string; capacity?: number }[];
     teams: { code: string; name: string; workshopName?: string; headcount?: number }[];
     teamCategories: { categoryName: string; teamName: string; workshopName?: string }[];
@@ -1270,8 +1270,10 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
       active: isActive,
       priority: mapPriority(orderData.priority),
       raytecDate: orderData.raytecDate ? new Date(orderData.raytecDate) : null,
-      // Комментарий заказа → «Информация для производства»; старая версия BSL его не шлёт (undefined) — не трогаем
-      ...(orderData.comment !== undefined ? { productionInfo: orderData.comment.trim() || null } : {}),
+      // «Информация для производства» (реквизит заказа клиента); `comment` — имя поля в первой версии BSL.
+      // Старая версия BSL его не шлёт (undefined) — не трогаем
+      ...((orderData.productionInfo ?? orderData.comment) !== undefined
+        ? { productionInfo: (orderData.productionInfo ?? orderData.comment ?? "").trim() || null } : {}),
     };
 
     const existing = ref
