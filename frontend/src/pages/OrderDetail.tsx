@@ -188,6 +188,12 @@ export default function OrderDetail() {
         )}
       </div>
       {error && <div className="error">{error}</div>}
+      {order.productionInfo && (
+        <div className="card">
+          <h2 className="card-title">Информация для производства</h2>
+          <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{order.productionInfo}</p>
+        </div>
+      )}
       {(editingOrder || order.description) && <div className="card">
         {!editingOrder ? (
           <p style={{ margin: 0 }}>{order.description}</p>

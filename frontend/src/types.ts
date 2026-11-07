@@ -46,6 +46,7 @@ export interface Order {
   approvedAt: string | null
   priority: number
   raytecDate: string | null
+  productionInfo?: string | null // «Информация для производства» из 1С (комментарий заказа)
   items?: OrderItem[]
 }
 

@@ -135,6 +135,7 @@ model Product {
   companyId      String
   capacityPerDay Int?
   capacityLocked Boolean @default(false)
+  barcode        String? // Штрихкод номенклатуры из 1С (РегистрСведений.ШтрихкодыНоменклатуры, МАКСИМУМ — как у Raytec)
 
   category       ProductCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   company        Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -160,6 +161,7 @@ model Order {
   orderRef    String?
   priority    Int       @default(20)
   raytecDate  DateTime?
+  productionInfo String? // «Информация для производства» — ЗаказКлиента.Комментарий из 1С
 
   company Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   items   OrderItem[]

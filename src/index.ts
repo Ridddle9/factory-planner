@@ -1124,7 +1124,7 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
 
   // fact из 1С (остаток «Не обеспечен» по своему запросу) больше не используется — факт считается по позициям заказов
   const { orders, categories, teams, teamCategories, capacity } = req.body as {
-    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number; transferDate?: string }[] }[];
+    orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; comment?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number; transferDate?: string; barcode?: string }[] }[];
     categories: { code: string; name: string; capacity?: number }[];
     teams: { code: string; name: string; workshopName?: string; headcount?: number }[];
     teamCategories: { categoryName: string; teamName: string; workshopName?: string }[];
@@ -1270,6 +1270,8 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
       active: isActive,
       priority: mapPriority(orderData.priority),
       raytecDate: orderData.raytecDate ? new Date(orderData.raytecDate) : null,
+      // Комментарий заказа → «Информация для производства»; старая версия BSL его не шлёт (undefined) — не трогаем
+      ...(orderData.comment !== undefined ? { productionInfo: orderData.comment.trim() || null } : {}),
     };
 
     const existing = ref
@@ -1296,10 +1298,12 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
         categoryMap.set(itemData.categoryName, categoryId);
       }
 
+      // Штрихкод: старая версия BSL его не шлёт (undefined) — не трогаем
+      const barcode = itemData.barcode !== undefined ? { barcode: itemData.barcode.trim() || null } : {};
       const product = await prisma.product.upsert({
         where: { code_companyId: { code: itemData.productCode, companyId } },
-        update: { name: itemData.productName, categoryId },
-        create: { code: itemData.productCode, name: itemData.productName, categoryId, companyId },
+        update: { name: itemData.productName, categoryId, ...barcode },
+        create: { code: itemData.productCode, name: itemData.productName, categoryId, companyId, ...barcode },
       });
       stats.products++;
       syncedProductIds.push(product.id);
@@ -4540,7 +4544,7 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
     include: {
       orderItem: {
         include: {
-          order: { select: { orderNumber: true, customer: true, approvedAt: true, priority: true, raytecDate: true } },
+          order: { select: { orderNumber: true, customer: true, approvedAt: true, priority: true, raytecDate: true, productionInfo: true } },
           product: { include: { category: true } },
         },
       },
@@ -4616,13 +4620,13 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
       item.order.orderNumber,
       item.product.code,
       item.product.name,
-      null, // штрихкод — после доработки синка 1С
+      item.product.barcode,
       item.product.category.name,
       item.order.customer,
       PRIORITY_LABEL(item.order.priority),
       excelDate(item.transferDate ?? item.order.raytecDate),
       r.teamName,
-      null, // информация для производства — после доработки синка 1С
+      item.order.productionInfo,
       totalPlan,
       ...isoDates.map(d => r.byDate.get(d) ?? null),
     ]);
