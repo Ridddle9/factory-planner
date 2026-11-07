@@ -4513,7 +4513,10 @@ app.post("/import/resolve-conflict", async (req: Request, res: Response) => {
   }
 });
 
-// --- Replan queue (sort by approvedAt asc, nulls last) ---
+// Выгрузка плана в Excel (формат export_to_be.xlsx): плоская таблица, строка = позиция заказа × бригада,
+// в каждой строке номер заказа и клиент (удобно фильтровать), строки — в порядке очереди планировщика,
+// колонки дней — дни периода, в которые есть план. Факт не выгружается.
+const PRIORITY_LABEL = (p: number) => (p <= 5 ? "Критический" : p <= 10 ? "Высокий" : p <= 20 ? "Средний" : "Низкий");
 
 app.get("/planning/export-excel", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
@@ -4530,170 +4533,118 @@ app.get("/planning/export-excel", async (req: Request, res: Response) => {
   const tasks = await prisma.dailyTask.findMany({
     where: {
       orderItem: { order: { companyId: cid }, product: VISIBLE_PRODUCT },
+      plannedQuantity: { gt: 0 },
       ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}),
     },
     include: {
       orderItem: {
         include: {
-          order: { select: { id: true, orderNumber: true, customer: true, approvedAt: true } },
+          order: { select: { orderNumber: true, customer: true, approvedAt: true, priority: true, raytecDate: true } },
           product: { include: { category: true } },
         },
       },
       team: true,
     },
-    orderBy: [{ date: "asc" }],
   });
 
-  const isoDate = (d: Date) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${dd}`;
-  };
+  const isoDate = (d: Date) => d.toISOString().slice(0, 10);
   const fmtShort = (iso: string) => `${iso.slice(8)}.${iso.slice(5, 7)}`;
-  const fmtFull = (d: Date | null | undefined) =>
-    d ? d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+  // Даты в базе — полночь UTC; в Excel — порядковым номером дня (без часового пояса), формат задаётся ячейке
+  const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
+  const excelDate = (d: Date | null | undefined) =>
+    d ? Math.round((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - EXCEL_EPOCH_MS) / 86400000) : null;
 
-  // Collect unique ISO dates, sorted
+  type Row = {
+    item: (typeof tasks)[number]["orderItem"];
+    teamName: string;
+    byDate: Map<string, number>;
+  };
+  const rows = new Map<string, Row>();
   const dateSet = new Set<string>();
-  for (const t of tasks) dateSet.add(isoDate(t.date));
+  for (const t of tasks) {
+    const key = `${t.orderItemId}|${t.teamId ?? ""}`;
+    let row = rows.get(key);
+    if (!row) {
+      row = { item: t.orderItem, teamName: t.team?.name ?? "—", byDate: new Map() };
+      rows.set(key, row);
+    }
+    const dk = isoDate(t.date);
+    dateSet.add(dk);
+    row.byDate.set(dk, (row.byDate.get(dk) ?? 0) + t.plannedQuantity);
+  }
   const isoDates = Array.from(dateSet).sort();
 
-  // Group: order → orderItem
-  type ItemData = {
-    productCode: string; productName: string;
-    categoryName: string; teamName: string;
-    byDate: Map<string, number>; totalActual: number;
-  };
-  type OrderData = {
-    orderNumber: string; customer: string;
-    approvedAt: Date | null;
-    items: Map<string, ItemData>;
-  };
-  const orderMap = new Map<string, OrderData>();
+  // Порядок очереди, как у планировщика: приоритет → Дата передачи строки → дата согласования
+  const sorted = Array.from(rows.values()).sort((a, b) =>
+    a.item.order.priority - b.item.order.priority ||
+    queueDateMs(a.item) - queueDateMs(b.item) ||
+    (a.item.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (b.item.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) ||
+    a.item.order.orderNumber.localeCompare(b.item.order.orderNumber) ||
+    a.item.id.localeCompare(b.item.id) || // строки одного заказа — в порядке строк заказа (id растёт по мере создания)
+    a.teamName.localeCompare(b.teamName));
 
-  for (const t of tasks) {
-    const oid = t.orderItem.order.id;
-    if (!orderMap.has(oid)) {
-      orderMap.set(oid, {
-        orderNumber: t.orderItem.order.orderNumber,
-        customer: t.orderItem.order.customer,
-        approvedAt: t.orderItem.order.approvedAt,
-        items: new Map(),
-      });
-    }
-    const order = orderMap.get(oid)!;
-    const iid = t.orderItemId;
-    if (!order.items.has(iid)) {
-      order.items.set(iid, {
-        productCode: t.orderItem.product.code,
-        productName: t.orderItem.product.name,
-        categoryName: t.orderItem.product.category.name,
-        teamName: t.team?.name ?? "—",
-        byDate: new Map(),
-        totalActual: 0,
-      });
-    }
-    const item = order.items.get(iid)!;
-    // Prefer a named team over "—" (fact-only tasks have no team)
-    if (item.teamName === "—" && t.team?.name) item.teamName = t.team.name;
-    const dk = isoDate(t.date);
-    if (t.plannedQuantity > 0) item.byDate.set(dk, (item.byDate.get(dk) ?? 0) + t.plannedQuantity);
-    item.totalActual += t.actualQuantity ?? 0;
-  }
-
-  const sortedOrders = Array.from(orderMap.values()).sort(
-    (a, b) => (a.approvedAt?.getTime() ?? 0) - (b.approvedAt?.getTime() ?? 0)
-  );
-
-  // Build AOA (array of arrays)
-  const FIXED_COLS = ["Заказ", "Клиент", "Артикул", "Товар", "Категория", "Бригада", "Итого план", "Итого факт"];
-  const dateHeaders = isoDates.map(fmtShort);
-  const aoa: (string | number)[][] = [[...FIXED_COLS, ...dateHeaders]];
-
-  // Track which rows are order headers (for potential styling)
-  const orderRowIndexes: number[] = [];
-
-  const unplannedRows: (string | number)[][] = [
-    ["Заказ", "Клиент", "Артикул", "Товар", "Категория", "Итого факт"],
+  const HEAD = [
+    "Заказ", "Артикул", "Товар", "Штрихкод номенклатуры", "Категория", "Клиент", "Приоритет",
+    "Дата передачи", "Бригада", "Информация для производства", "Итого план",
   ];
-
-  for (const order of sortedOrders) {
-    const plannedItems = Array.from(order.items.values()).filter(i => i.byDate.size > 0);
-    const unplannedItems = Array.from(order.items.values()).filter(i => i.byDate.size === 0 && i.totalActual > 0);
-
-    // Unplanned actuals → separate sheet
-    for (const item of unplannedItems) {
-      unplannedRows.push([
-        order.orderNumber, order.customer,
-        item.productCode, item.productName, item.categoryName, item.totalActual,
-      ]);
-    }
-
-    if (plannedItems.length === 0) continue;
-
-    orderRowIndexes.push(aoa.length);
+  const aoa: (string | number | null)[][] = [[...HEAD, ...isoDates.map(fmtShort)]];
+  for (const r of sorted) {
+    const { item } = r;
+    const totalPlan = Array.from(r.byDate.values()).reduce((s, v) => s + v, 0);
     aoa.push([
-      order.orderNumber,
-      order.customer,
-      "", "", "", "", "", "",
-      ...isoDates.map(() => "" as string | number),
+      item.order.orderNumber,
+      item.product.code,
+      item.product.name,
+      null, // штрихкод — после доработки синка 1С
+      item.product.category.name,
+      item.order.customer,
+      PRIORITY_LABEL(item.order.priority),
+      excelDate(item.transferDate ?? item.order.raytecDate),
+      r.teamName,
+      null, // информация для производства — после доработки синка 1С
+      totalPlan,
+      ...isoDates.map(d => r.byDate.get(d) ?? null),
     ]);
-    for (const item of plannedItems) {
-      const totalPlan = Array.from(item.byDate.values()).reduce((s, v) => s + v, 0);
-      aoa.push([
-        "", "",
-        item.productCode,
-        item.productName,
-        item.categoryName,
-        item.teamName,
-        totalPlan,
-        item.totalActual || "",
-        ...isoDates.map(d => item.byDate.get(d) ?? ""),
-      ]);
-    }
   }
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-  // Merge Заказ / Клиент across all product rows of each order
-  const merges: XLSX.Range[] = [];
-  for (let i = 0; i < orderRowIndexes.length; i++) {
-    const startRow = orderRowIndexes[i] as number;
-    const nextStart = orderRowIndexes[i + 1] as number | undefined;
-    const endRow = nextStart !== undefined ? nextStart - 1 : aoa.length - 1;
-    if (endRow > startRow) {
-      for (const col of [0, 1]) {
-        merges.push({ s: { r: startRow, c: col }, e: { r: endRow, c: col } });
-      }
-    }
+  const transferCol = HEAD.indexOf("Дата передачи");
+  for (let r = 1; r < aoa.length; r++) {
+    const cell = ws[XLSX.utils.encode_cell({ r, c: transferCol })];
+    if (cell) cell.z = "dd.mm.yyyy";
   }
-  ws["!merges"] = merges;
-
-  // Column widths
   ws["!cols"] = [
-    { wch: 20 }, { wch: 24 },
-    { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 14 },
-    { wch: 11 }, { wch: 11 },
+    { wch: 14 }, { wch: 18 }, { wch: 44 }, { wch: 20 }, { wch: 22 }, { wch: 26 }, { wch: 12 },
+    { wch: 13 }, { wch: 14 }, { wch: 30 }, { wch: 11 },
     ...isoDates.map(() => ({ wch: 7 })),
   ];
-
-  // Freeze header row + first 2 info columns
-  ws["!sheetViews"] = [{ state: "frozen", xSplit: 2, ySplit: 1, topLeftCell: "C2" }];
+  // Фильтры в шапке
+  ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: aoa[0]!.length - 1 } }) };
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "План производства");
-  if (unplannedRows.length > 1) {
-    const wsU = XLSX.utils.aoa_to_sheet(unplannedRows);
-    wsU["!cols"] = [{ wch: 20 }, { wch: 24 }, { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, wsU, "Незапланированный факт");
-  }
 
-  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  const buf = freezeHeaderRow(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", 'attachment; filename="plan.xlsx"');
   res.send(buf);
 });
+
+// Закрепить строку заголовков первого листа. SheetJS 0.18 не пишет закрепление, поэтому
+// дописываем <pane> в разметку листа внутри готового файла (xlsx — это zip)
+function freezeHeaderRow(buf: Buffer): Buffer {
+  const zip = XLSX.CFB.read(buf, { type: "buffer" });
+  const entry = XLSX.CFB.find(zip, "/xl/worksheets/sheet1.xml");
+  if (!entry?.content) return buf;
+  const xml = Buffer.from(entry.content as Uint8Array).toString("utf8");
+  const frozen = xml.replace(
+    /<sheetView([^>]*?)\/>/,
+    '<sheetView$1><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView>',
+  );
+  if (frozen === xml) return buf;
+  entry.content = Buffer.from(frozen, "utf8");
+  return XLSX.CFB.write(zip, { fileType: "zip", type: "buffer", compression: true }) as Buffer;
+}
 
 app.post("/planning/replan-queue", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
