@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './list-pages.css'
 import { api } from '../api'
 import { useScrollToForm } from '../useScrollToForm'
 import type { CategoryBlock, ProductCategory, Team, Workshop } from '../types'
@@ -199,12 +200,21 @@ export default function Categories() {
   if (loading) return <div className="card">Загрузка...</div>
 
   return (
-    <>
-      <h1 className="page-title">Категории номенклатуры</h1>
-      <p className="page-description">Категории продукции, мощности и привязка к бригадам.</p>
+    <div className="list-page">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Категории номенклатуры</h1>
+          <p className="page-description">Категории продукции, мощности и привязка к бригадам.</p>
+        </div>
+        {tab === 'active' && (
+          <div className="page-heading-actions">
+            <button type="button" className="btn btn-primary" onClick={openCreate} disabled={workshops.length === 0}>Добавить категорию</button>
+          </div>
+        )}
+      </div>
       {error && <div className="error">{error}</div>}
-      <div className="card">
-        <div className="tabs" style={{ marginBottom: '1rem' }}>
+      <div className="card list-card">
+        <div className="tabs list-tabs list-tabs-inset">
           <button type="button" className={`tab ${tab === 'active' ? 'active' : ''}`} onClick={() => setTab('active')}>Активные</button>
           <button type="button" className={`tab ${tab === 'hidden' ? 'active' : ''}`} onClick={() => setTab('hidden')}>
             Скрытые{hiddenList.length > 0 && <span className="badge badge-neutral" style={{ marginLeft: 6 }}>{hiddenList.length}</span>}
@@ -215,7 +225,7 @@ export default function Categories() {
             <div className="empty">Скрытых категорий нет.</div>
           ) : (
             <>
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 10 }}>
+              <div className="list-note">
                 Скрытые категории не видны в приложении, но синк из 1С и планирование по ним продолжаются.
               </div>
               <table className="stack sticky-head">
@@ -241,11 +251,6 @@ export default function Categories() {
             </>
           )
         ) : (<>
-        <div className="toolbar">
-          <button type="button" className="btn btn-primary" onClick={openCreate} disabled={workshops.length === 0}>
-            Добавить категорию
-          </button>
-        </div>
         {(showForm || editing !== null) && (
           <div className="form-panel" ref={formRef}>
             <h3 className="form-panel-title">{editing ? 'Изменение категории' : 'Новая категория'}</h3>
@@ -424,6 +429,6 @@ export default function Categories() {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }

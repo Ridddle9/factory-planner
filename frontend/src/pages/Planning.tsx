@@ -112,7 +112,7 @@ export default function Planning() {
 
   return (
     <div className="planning-page">
-      <div className="page-header">
+      <div className="page-heading">
         <div>
           <h1 className="page-title">Аналитика планирования</h1>
           <p className="planning-description">План, фактический выпуск и доступные мощности.</p>
@@ -121,24 +121,24 @@ export default function Planning() {
 
       {error && <div className="error">{error}</div>}
 
-      <div className="card planning-card">
-        {/* Табы */}
-        <div className="tabs" style={{ marginBottom: '1.25rem' }}>
-          {([
-            ['team-load',         'Загрузка бригад'],
-            // «Завершение заказов» пока скрыто (вкладка и данные остались)
-            ['fact-day',          'Факт за день'],
-            ['unplanned',         'Незапланированный факт'],
-          ] as [Tab, string][]).map(([t, label]) => (
-            <button key={t} type="button" className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-              {label}
-              {t === 'unplanned' && unplannedData && unplannedData.count > 0 && (
-                <span className="badge badge-warning" style={{ marginLeft: 6 }}>{unplannedData.count}</span>
-              )}
-            </button>
-          ))}
-        </div>
+      {/* Табы */}
+      <div className="tabs planning-tabs">
+        {([
+          ['team-load',         'Загрузка бригад'],
+          // «Завершение заказов» пока скрыто (вкладка и данные остались)
+          ['fact-day',          'Факт за день'],
+          ['unplanned',         'Незапланированный факт'],
+        ] as [Tab, string][]).map(([t, label]) => (
+          <button key={t} type="button" className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+            {label}
+            {t === 'unplanned' && unplannedData && unplannedData.count > 0 && (
+              <span className="badge badge-warning" style={{ marginLeft: 6 }}>{unplannedData.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
 
+      <div className="card planning-card">
         {/* ── ЗАГРУЗКА БРИГАД ── */}
         {tab === 'team-load' && <TeamLoad teams={teams} />}
 
@@ -198,7 +198,7 @@ export default function Planning() {
 
                     return (
                       <tr key={ord.orderId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
-                        <td className="stack-title" style={{ padding: '8px 12px', fontWeight: 700 }}>{ord.orderNumber}</td>
+                        <td className="stack-title" style={{ padding: '8px 12px', fontWeight: 600 }}>{ord.orderNumber}</td>
                         <td data-label="Клиент" style={{ padding: '8px 12px', fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ord.customer}>{ord.customer}</td>
                         <td data-label="Менеджер" style={{ padding: '8px 12px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{ord.manager ?? '—'}</td>
                         <td data-label="Согласован" style={{ padding: '8px 12px', fontSize: '0.82rem' }}>{ord.approvedAt ? formatDate(ord.approvedAt) : '—'}</td>
@@ -212,7 +212,7 @@ export default function Planning() {
                             <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${plannedPct}%`, background: 'var(--plan-scheduled-border)', borderRadius: 5 }} />
                             <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${donePct}%`, background: 'var(--success)', borderRadius: 5 }} />
                           </div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2, display: 'flex', justifyContent: 'space-between' }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2, display: 'flex', justifyContent: 'space-between' }}>
                             <span>план {ord.totalPlanned} · факт <span style={{ color: 'var(--success)', fontWeight: 600 }}>{ord.totalProduced}</span> / {ord.totalQuantity}</span>
                             {ord.unplannedItems > 0 && <span style={{ color: 'var(--danger)' }}>{ord.unplannedItems} не в плане</span>}
                           </div>
@@ -290,14 +290,14 @@ export default function Planning() {
                   <tbody>
                     {unplannedData.items.map((item, i) => (
                       <tr key={item.taskId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
-                        <td className="stack-title" style={{ padding: '7px 12px', fontWeight: 700 }}>{item.orderNumber}</td>
+                        <td className="stack-title" style={{ padding: '7px 12px', fontWeight: 600 }}>{item.orderNumber}</td>
                         <td data-label="Клиент" style={{ padding: '7px 12px', fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.customer}>{item.customer}</td>
                         <td data-label="Категория" style={{ padding: '7px 12px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{item.categoryName ?? '—'}</td>
                         <td className="stack-block" style={{ padding: '7px 12px', fontSize: '0.82rem' }}>
                           <span style={{ fontWeight: 600 }}>{item.productCode}</span>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 1 }}>{item.productName}</div>
                         </td>
-                        <td data-label="Факт, шт." style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--warning)' }}>
+                        <td data-label="Факт, шт." style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--warning)' }}>
                           {item.actualQuantity.toLocaleString('ru-RU')}
                         </td>
                       </tr>
@@ -339,8 +339,8 @@ export default function Planning() {
                   background: HEADER_BG, color: HEADER_COLOR,
                   borderRadius: '6px 6px 0 0', padding: '6px 12px',
                 }}>
-                  <span style={{ fontWeight: 700 }}>{team.teamName}</span>
-                  <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: '0.9rem' }}>
+                  <span style={{ fontWeight: 600 }}>{team.teamName}</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 600, fontSize: '0.9rem' }}>
                     {team.totalActual.toLocaleString('ru-RU')} шт.
                   </span>
                 </div>
@@ -357,7 +357,7 @@ export default function Planning() {
                       <tr key={cat.categoryId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : 'var(--plan-surface-muted)' }}>
                         <td className="stack-title" style={{ padding: '6px 12px', fontWeight: 500 }}>{cat.categoryName}</td>
                         <td data-label="Позиций" style={{ padding: '6px 12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.82rem' }}>{cat.items}</td>
-                        <td data-label="Факт, шт." style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>
+                        <td data-label="Факт, шт." style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--success)' }}>
                           {cat.actual.toLocaleString('ru-RU')}
                         </td>
                       </tr>

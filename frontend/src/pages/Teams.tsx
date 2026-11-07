@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './list-pages.css'
 import { api } from '../api'
 import { useScrollToForm } from '../useScrollToForm'
 import type { Team, TeamDayCapacity } from '../types'
@@ -197,7 +198,7 @@ export default function Teams() {
   if (loading) return <div className="card">Загрузка...</div>
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
-    padding: '0.5rem 1.25rem',
+    padding: '12px 0',
     fontWeight: 600,
     fontSize: '0.85rem',
     cursor: 'pointer',
@@ -209,23 +210,27 @@ export default function Teams() {
   })
 
   return (
-    <>
-      <div className="page-header">
-        <div><h1 className="page-title">Бригады</h1>
-      <p className="page-description">Состав производства, доступные мощности и рабочие дни.</p></div>
+    <div className="list-page">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Бригады</h1>
+          <p className="page-description">Состав производства, доступные мощности и рабочие дни.</p>
+        </div>
+        <div className="page-heading-actions">
+          {tab === 'teams'
+            ? <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить бригаду</button>
+            : <button type="button" className="btn btn-primary" onClick={openCapNew} disabled={list.length === 0}>Добавить корректировку</button>}
+        </div>
       </div>
       {error && <div className="error" onClick={() => setError(null)} style={{ cursor: 'pointer' }}>{error} ✕</div>}
 
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '1rem' }}>
+      <div className="list-tabs">
         <button style={tabStyle(tab === 'teams')} onClick={() => setTab('teams')}>Список бригад</button>
         <button style={tabStyle(tab === 'capacity')} onClick={() => setTab('capacity')}>Мощности по дням</button>
       </div>
 
       {/* Teams list */}
-      {tab === 'teams' && <div className="card">
-        <div className="toolbar">
-          <button type="button" className="btn btn-primary" onClick={openCreate}>Добавить бригаду</button>
-        </div>
+      {tab === 'teams' && <div className="card list-card">
         {(showForm || editing !== null) && (
           <div className="form-panel" ref={formRef}>
             <h3 className="form-panel-title">{editing ? 'Изменение бригады' : 'Новая бригада'}</h3>
@@ -267,16 +272,15 @@ export default function Teams() {
         )}
       </div>}
 
-      {tab === 'capacity' && <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.25rem 1rem', marginBottom: '0.75rem' }}>
+      {tab === 'capacity' && <div className="card capacity-card">
+        <div className="capacity-heading">
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Мощности бригад по дням</h2>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
             Меньше 100% — вышло меньше людей, больше 100% — сверхурочные или усиление
           </div>
         </div>
 
-        <div className="toolbar" style={{ marginBottom: '0.75rem' }}>
-          <button type="button" className="btn btn-primary" onClick={openCapNew} disabled={list.length === 0}>Добавить корректировку</button>
+        <div className="toolbar capacity-dates">
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             С: <input type="date" value={capDateFrom} onChange={e => e.target.value && setCapDateFrom(e.target.value)} />
           </label>
@@ -343,8 +347,8 @@ export default function Teams() {
           <>
             {/* Корректировки, сгруппированные в периоды */}
             {overrides.length > 0 && (
-              <div style={{ marginBottom: '1rem' }}>
-                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+              <div className="capacity-overrides">
+                <div className="capacity-section-label">
                   Активные корректировки
                 </div>
                 <table className="stack" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
@@ -385,7 +389,7 @@ export default function Teams() {
             )}
 
             {/* Сетка: клик по клетке открывает форму на этот день */}
-            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+            <div className="capacity-section-label">
               По дням — нажмите на клетку, чтобы изменить
             </div>
             <div style={{ overflowX: 'auto' }}>
@@ -435,7 +439,7 @@ export default function Teams() {
                             {cap ? (
                               <span style={{ fontWeight: 700, fontSize: '0.75rem', color: capColor(pct).color }}>{pct}%</span>
                             ) : (
-                              <span style={{ fontSize: '0.65rem', color: 'var(--border-strong)' }}>{off ? '' : '—'}</span>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--border-strong)' }}>{off ? '' : '—'}</span>
                             )}
                           </td>
                         )
@@ -448,6 +452,6 @@ export default function Teams() {
           </>
         )}
       </div>}
-    </>
+    </div>
   )
 }

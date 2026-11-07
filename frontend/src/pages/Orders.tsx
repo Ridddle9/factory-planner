@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './list-pages.css'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { useScrollToForm } from '../useScrollToForm'
@@ -104,8 +105,8 @@ export default function Orders() {
     : tabList
 
   const tabStyle = (t: Tab): React.CSSProperties => ({
-    padding: '6px 18px',
-    fontWeight: tab === t ? 700 : 400,
+    padding: '16px 0',
+    fontWeight: tab === t ? 600 : 400,
     color: tab === t ? 'var(--primary)' : 'var(--text-muted)',
     background: 'none',
     border: 'none',
@@ -117,14 +118,23 @@ export default function Orders() {
   if (loading) return <div className="card">Загрузка...</div>
 
   return (
-    <>
-      <h1 className="page-title">Заказы</h1>
-      <p className="page-description">Заказы клиентов, сроки готовности и приоритеты производства.</p>
+    <div className="list-page">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Заказы</h1>
+          <p className="page-description">Заказы клиентов, сроки готовности и приоритеты производства.</p>
+        </div>
+        {tab === 'active' && (
+          <div className="page-heading-actions">
+            <button type="button" className="btn btn-primary" onClick={openCreate}>Создать заказ</button>
+          </div>
+        )}
+      </div>
       {error && <div className="error">{error}</div>}
-      <div className="card">
+      <div className="card list-card">
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: '1rem' }}>
+        <div className="list-tabs list-tabs-inset">
           <button style={tabStyle('active')} onClick={() => setTab('active')}>
             Актуальные {active.length > 0 && <span style={{ marginLeft: 4, fontSize: '0.78rem', opacity: 0.7 }}>({active.length})</span>}
           </button>
@@ -133,18 +143,18 @@ export default function Orders() {
           </button>
         </div>
 
-        <div className="toolbar" style={{ marginBottom: q ? 16 : '1rem' }}>
-          {tab === 'active' && <button type="button" className="btn btn-primary" onClick={openCreate}>Создать заказ</button>}
+        <div className="list-toolbar">
           <input
-            className="toolbar-search toolbar-field"
+            className="list-search"
             type="search"
+            aria-label="Поиск заказов"
             placeholder="Поиск: номер, клиент, менеджер, товар"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
           {search && <button type="button" className="btn btn-secondary" onClick={() => setSearch('')}>Сбросить</button>}
+          {q && <span className="list-summary">Найдено {shown.length} из {tabList.length}</span>}
         </div>
-        {q && <div className="toolbar-summary">Найдено {shown.length} из {tabList.length}</div>}
 
         {showForm && tab === 'active' && (
           <div className="form-panel" ref={formRef}>
@@ -211,6 +221,6 @@ export default function Orders() {
           </table>
         )}
       </div>
-    </>
+    </div>
   )
 }

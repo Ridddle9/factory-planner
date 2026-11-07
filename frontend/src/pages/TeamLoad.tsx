@@ -103,7 +103,17 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
 
   return (
     <>
-      <div className="toolbar">
+      {mode !== 'brigade' && (
+        <div className="planning-submodes">
+          {modes.map(([m, label, count]) => (
+            <button key={m} type="button" className={`btn btn-sm ${mode === m ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode(m)}>
+              {label}
+              {!!count && mode !== m && <span className="badge badge-danger" style={{ marginLeft: 5 }}>{count}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="toolbar planning-filters">
         {mode === 'brigade' && (
           <>
             <button type="button" className="btn btn-secondary" onClick={() => setMode(backTo)}>← {backLabel}</button>
@@ -121,16 +131,6 @@ export default function TeamLoad({ teams }: { teams: Team[] }) {
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           По: <input type="date" value={dateTo} onChange={e => e.target.value && setDateTo(e.target.value)} />
         </label>
-        {mode !== 'brigade' && (
-          <div className="planning-submodes">
-            {modes.map(([m, label, count]) => (
-              <button key={m} type="button" className={`btn btn-sm ${mode === m ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode(m)}>
-                {label}
-                {!!count && mode !== m && <span className="badge badge-danger" style={{ marginLeft: 5 }}>{count}</span>}
-              </button>
-            ))}
-          </div>
-        )}
         {loading && <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Загрузка…</span>}
       </div>
 

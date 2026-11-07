@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './list-pages.css'
 import { api } from '../api'
 import { useScrollToForm } from '../useScrollToForm'
 import type { Product, ProductCategory, ProductTeamCapacity } from '../types'
@@ -100,21 +101,28 @@ export default function Products() {
   if (loading) return <div className="card">Загрузка...</div>
 
   return (
-    <>
-      <h1 className="page-title">Товары</h1>
-      <p className="page-description">Номенклатура и производительность по каждому товару.</p>
-      {error && <div className="error">{error}</div>}
-      <div className="card">
-        <div className="toolbar">
+    <div className="list-page">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Товары</h1>
+          <p className="page-description">Номенклатура и производительность по каждому товару.</p>
+        </div>
+        <div className="page-heading-actions">
           <button type="button" className="btn btn-primary" onClick={openCreate} disabled={categories.length === 0}>Добавить товар</button>
+        </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="card list-card">
+        <div className="list-toolbar">
           <input
-            className="toolbar-search toolbar-field"
+            className="list-search"
+            aria-label="Поиск по коду или названию"
             placeholder="Поиск по коду / названию"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
           <select
-            className="toolbar-field toolbar-select"
+            className="list-select"
             value={categoryFilter}
             onChange={e => setCategoryFilter(e.target.value)}
             aria-label="Фильтр по категории"
@@ -127,10 +135,8 @@ export default function Products() {
           {(search || categoryFilter) && (
             <button type="button" className="btn btn-secondary" onClick={() => { setSearch(''); setCategoryFilter('') }}>Сбросить</button>
           )}
+          {(search || categoryFilter) && <span className="list-summary">Показано {filtered.length} из {list.length}</span>}
         </div>
-        {(search || categoryFilter) && (
-          <div className="toolbar-summary">Показано {filtered.length} из {list.length}</div>
-        )}
 
         {(showForm || editing !== null) && (
           <div className="form-panel" ref={formRef}>
@@ -259,6 +265,6 @@ export default function Products() {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }

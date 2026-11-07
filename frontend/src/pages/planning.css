@@ -1,98 +1,123 @@
-/* The planning workspace uses its own surface tokens: navigation can change
-   independently without making the calendar headers unreadable. */
+/* Planning surfaces remain independent of the navigation palette. */
 .schedule-page,
 .planning-page {
-  --plan-header: #f3f5f4;
-  --plan-section: #eef2ef;
-  --plan-weekend: #ecefed;
-  --plan-surface-muted: #fafbf9;
-  --plan-scheduled: #eaf0f5;
-  --plan-scheduled-border: #b7cbd9;
-  --plan-success-border: #b5d2bf;
-  --plan-warning-border: #dfd1a9;
-  --plan-danger-border: #e4bbb6;
+  --plan-header: #e8f0fa;
+  --plan-section: #d9e7f6;
+  --plan-weekend: #e0e7f0;
+  --plan-surface-muted: #f5f8fc;
+  --plan-scheduled: #dceeff;
+  --plan-scheduled-border: #8fbeeb;
+  --plan-success-border: #8dc7d7;
+  --plan-warning-border: #e1bd7d;
+  --plan-danger-border: #e6a3a5;
   min-width: 0;
   font-variant-numeric: tabular-nums;
 }
 
-.schedule-heading { margin-bottom: 24px; }
-.schedule-heading .page-title { margin-bottom: 5px; }
 .planning-description {
   margin: 6px 0 0;
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.5;
 }
-/* Ряд действий над графиком. Кнопки лежат в .schedule-actions (display: contents на компьютере),
-   на телефоне они прячутся под «Действия ▾» — см. App.css */
-.schedule-toolbar {
+.schedule-heading .page-heading-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.schedule-heading .page-heading-actions .btn { min-height: 38px; }
+/* .schedule-toolbar: кнопка «Действия ▾» (только телефон) + .schedule-actions.
+   На телефоне действия раскрываются по кнопке — см. конец файла */
+.schedule-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px 24px;
+  flex-wrap: wrap;
   margin-bottom: 20px;
 }
-.schedule-toolbar .btn { min-height: 34px; }
-.schedule-page .schedule-card,
-.planning-page .planning-card {
-  padding: 20px;
+.schedule-action-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.schedule-actions .btn { min-height: 34px; }
+.schedule-actions .schedule-clear { margin-left: auto; }
+.schedule-undo { margin-bottom: 20px; }
+.schedule-page .schedule-card {
+  padding: 0;
   overflow: visible;
 }
 .schedule-page .schedule-filters {
-  padding-bottom: 18px;
-  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 20px 24px;
+  padding: 24px;
   border-bottom: 1px solid var(--border);
 }
-/* На телефоне фильтры раскладывает сетка из App.css */
-@media (min-width: 769px) {
-  .schedule-page .schedule-filters { display: flex; gap: 12px; align-items: flex-end; }
+.schedule-date-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  flex: 0 1 292px;
+  min-width: 250px;
 }
-.schedule-filters > label {
+.schedule-entity-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  flex: 1 1 390px;
+  min-width: 0;
+}
+.schedule-filters label {
+  display: flex;
   flex-direction: column;
-  align-items: flex-start !important;
-  gap: 5px !important;
+  align-items: stretch;
+  gap: 7px;
+  min-width: 0;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
 }
 .schedule-filters input,
 .schedule-filters select {
-  min-height: 34px;
-  max-width: 230px;
-  min-width: 130px;
+  min-height: 38px;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
   margin: 0;
 }
 .schedule-legend {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px 18px;
+  gap: 10px 20px;
+  padding: 16px 24px 10px;
+  border-top: 1px solid var(--border);
   color: var(--text-secondary);
   font-size: 12px;
-  margin-bottom: 16px;
 }
+.schedule-help { margin-left: auto; color: var(--text-muted); }
+.schedule-summary { padding: 0 24px 18px; color: var(--text-muted); font-size: 12px; }
 .schedule-grid-scroll,
 .planning-grid-scroll {
   overflow-x: auto;
   position: relative;
-  border: 1px solid var(--border);
-  border-radius: 6px;
 }
 .schedule-grid-scroll table,
 .planning-grid-scroll table { font-variant-numeric: tabular-nums; }
 .schedule-grid-scroll th,
-.planning-grid-scroll th { height: 56px; }
+.planning-grid-scroll th { height: 58px; }
 .schedule-grid-scroll th,
 .planning-page th {
   text-transform: none;
   letter-spacing: 0;
 }
-.schedule-grid-scroll tbody td {
-  border-bottom: 1px solid var(--border);
-}
-.schedule-grid-scroll tbody td[title]:hover {
-  box-shadow: inset 0 0 0 1px var(--border-strong);
-}
+.schedule-grid-scroll tbody td { border-bottom: 1px solid var(--border); }
+.schedule-grid-scroll tbody td[title]:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
 .schedule-grid-scroll td > div + div { margin-top: 3px; }
 /* На телефоне окно задачи — шторка снизу (App.css), её скругления не трогаем */
 @media (min-width: 769px) {
@@ -104,58 +129,80 @@
 .schedule-cell-popup input,
 .schedule-cell-popup select { min-height: 34px; }
 .schedule-cell-popup .btn { justify-content: center; }
-.planning-page .tabs { gap: 16px; }
-.planning-page .tab { padding: 10px 2px 14px; }
+
+/* Report navigation, view choice, and filtering are separate levels. */
+.planning-page .planning-tabs {
+  gap: 24px;
+  margin: 0 0 24px;
+}
+.planning-page .tab { padding: 0 0 14px; }
+.planning-page .planning-card { padding: 24px; overflow: visible; }
 .planning-page .toolbar {
-  gap: 12px;
-  padding: 0 0 18px;
-  margin-bottom: 18px;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 0 0 24px;
+  margin-bottom: 24px;
   border-bottom: 1px solid var(--border);
 }
 .planning-page .toolbar label {
   color: var(--text-secondary);
   font-size: 12px;
 }
+.planning-page .planning-filters label {
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 7px !important;
+}
 .planning-page .toolbar input,
-.planning-page .toolbar select { min-height: 34px; }
+.planning-page .toolbar select { min-height: 38px; margin: 0; }
 .planning-submodes {
-  margin-left: auto;
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 3px;
-  padding: 3px;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 24px;
   background: var(--plan-header);
   border-radius: 6px;
-  border: 1px solid var(--border);
 }
 .planning-submodes .btn {
+  min-height: 32px;
   border: 1px solid transparent;
   box-shadow: none;
   background: transparent;
   color: var(--text-secondary);
 }
 .planning-submodes .btn-primary {
-  color: var(--text);
-  background: var(--surface);
-  border-color: var(--border);
-  box-shadow: 0 1px 2px rgb(25 40 32 / 4%);
+  color: #fff;
+  background: var(--primary);
+  border-color: var(--primary);
 }
-.planning-submodes .btn:hover { color: var(--text); background: var(--surface); }
+.planning-submodes .btn:hover { color: var(--primary); background: var(--primary-light); }
+.planning-submodes .btn-primary:hover { color: #fff; background: var(--primary-hover); }
 .planning-page table { line-height: 1.5; }
-.planning-page .empty { padding: 64px 24px; color: var(--text-secondary); }
+.planning-page .empty { padding: 48px 24px; color: var(--text-secondary); }
 
-@media (min-width: 769px) and (max-width: 1100px) {
-  .planning-submodes { margin-left: 0; }
-  .planning-page .tabs { flex-wrap: wrap; gap: 4px 14px; }
-  .schedule-filters select { max-width: 180px; }
+@media (max-width: 1100px) {
+  .schedule-heading { align-items: flex-start; }
+  .schedule-heading .page-heading-actions { justify-content: flex-start; }
+  .planning-page .planning-tabs { flex-wrap: wrap; gap: 14px 24px; }
 }
 @media (max-width: 768px) {
-  .schedule-page .schedule-card,
-  .planning-page .planning-card { padding: 12px; }
-  .schedule-heading { margin-bottom: 12px; }
-  .schedule-toolbar { gap: 6px; margin-bottom: 12px; }
-  .schedule-filters > label { align-items: stretch !important; }
-  .schedule-filters input,
-  .schedule-filters select { width: 100%; max-width: none; min-width: 0; }
-  .planning-page .toolbar { padding-bottom: 12px; margin-bottom: 12px; }
+  .schedule-page .schedule-filters,
+  .planning-page .planning-card { padding: 16px; }
+  .schedule-date-filters { flex: 1 1 250px; }
+  .schedule-entity-filters { grid-template-columns: 1fr; }
+  .schedule-actions .schedule-clear { margin-left: 0; }
+  .schedule-legend { padding: 16px; }
+  .schedule-help { margin-left: 0; }
+  .schedule-summary { padding: 0 16px 16px; }
+  .schedule-heading { margin-bottom: 16px; }
+  .schedule-heading .page-heading-actions .btn { flex: 1 1 auto; }
+  .schedule-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .schedule-actions { display: none; margin: 0; }
+  .schedule-actions.open { display: flex; width: 100%; }
+  .schedule-undo { margin-bottom: 16px; }
+  .schedule-card > .view-switch { margin: 12px 16px; }
+  .schedule-card > .day-chips { margin: 0 0 12px; padding: 2px 16px 6px; }
+  .schedule-card > .day-group { margin: 0 16px 14px; }
+  .planning-page .toolbar { padding-bottom: 16px; margin-bottom: 16px; }
 }
