@@ -127,7 +127,7 @@ export default function Onboarding() {
         padding: 24,
       }}>
         <div style={{ color: 'var(--text-secondary)', fontSize: 14, letterSpacing: '-.02em', fontWeight: 600, marginBottom: 20 }}>
-          Фабрика планер
+          Фабрика
         </div>
         <h1 style={{
           color: 'var(--text)', fontWeight: 600, textAlign: 'center',

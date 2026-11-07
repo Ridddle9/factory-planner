@@ -1,6 +1,6 @@
 {
-  "name": "Фабрика планер",
-  "short_name": "Planner",
+  "name": "Фабрика",
+  "short_name": "Фабрика",
   "description": "Производственное планирование",
   "lang": "ru",
   "start_url": "/schedule",

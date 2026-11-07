@@ -6,7 +6,7 @@ export default function AuthFrame({ children }: { children: ReactNode }) {
   return (
     <div className="auth-page">
       <aside className="auth-intro">
-        <div className="auth-wordmark">Фабрика планер<span>Планирование производства</span></div>
+        <div className="auth-wordmark">Фабрика<span>Планирование производства</span></div>
         <div className="auth-intro-body">
           <p className="auth-eyebrow">Рабочее пространство производства</p>
           <h2>План на день.<br />Общая картина.</h2>
@@ -22,7 +22,7 @@ export default function AuthFrame({ children }: { children: ReactNode }) {
         <div className="auth-intro-footer">От заказа к производственному плану</div>
       </aside>
       <main className="auth-main">
-        <div className="auth-mobile-wordmark">Фабрика планер</div>
+        <div className="auth-mobile-wordmark">Фабрика</div>
         <div className="auth-panel">{children}</div>
       </main>
     </div>

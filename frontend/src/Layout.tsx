@@ -62,7 +62,7 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
       <nav className={menuOpen ? 'nav open' : 'nav'} aria-label="Основная навигация">
         <div className="nav-logo">
           <div>
-            <div className="nav-wordmark">Фабрика планер<span className="wordmark-period">.</span></div>
+            <div className="nav-wordmark">Фабрика</div>
             <span>Планирование производства</span>
           </div>
         </div>
