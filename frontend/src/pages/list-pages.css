@@ -143,12 +143,59 @@
   }
 }
 
+/* Реестр переносов: вторая строка ячейки (клиент, код товара, пояснение) — приглушённая */
+.moves-page .moves-toolbar { flex-wrap: wrap; }
+.moves-page .moves-period { display: inline-flex; align-items: center; gap: 8px; margin: 0; color: var(--text-secondary); font-size: 13px; }
+.moves-page .moves-period input { width: auto; margin: 0; }
+.moves-page .moves-user { width: 240px; margin: 0; }
+.moves-page .moves-table td { vertical-align: top; }
+.moves-page .moves-table th.num,
+.moves-page .moves-table td.num { text-align: right; white-space: nowrap; }
+.moves-page .moves-table td.stack-title,
+.moves-page .moves-table td.moves-product,
+.moves-page .moves-table td.moves-kind { display: table-cell; }
+.moves-page .moves-sub { display: block; margin-top: 2px; color: var(--text-muted); font-size: 12px; font-weight: 400; }
+.moves-page .moves-day { display: block; }
+.moves-page .moves-time { display: block; color: var(--text-muted); font-size: 12px; }
+.moves-page .moves-when,
+.moves-page .moves-who { white-space: nowrap; color: var(--text-secondary); font-size: 13px; }
+.moves-page .moves-product { min-width: 190px; max-width: 260px; }
+.moves-page .moves-table td.moves-place { display: table-cell; min-width: 130px; }
+.moves-page .moves-date { display: block; white-space: nowrap; }
+.moves-page .moves-team { display: block; margin-top: 2px; color: var(--text-secondary); font-size: 13px; }
+.moves-page .moves-off { color: var(--text-muted); }
+.moves-page .moves-kind .badge { white-space: nowrap; }
+.moves-page tr.is-undone td { color: var(--text-muted); }
+.moves-page tr.is-undone td.stack-title a { color: var(--text-muted); text-decoration: line-through; }
+
 @media (max-width: 768px) {
   .list-page .list-toolbar { flex-wrap: wrap; padding: 14px 16px; }
   .list-page .list-search,
   .list-page .list-select { width: 100%; max-width: none; }
   .list-page .list-note { padding: 14px 16px 0; }
   .list-page .list-card > .form-panel { margin: 16px; padding-bottom: 20px; }
+  .moves-page .moves-period { flex: 1 1 calc(50% - 6px); }
+  .moves-page .moves-period input { flex: 1; min-width: 0; }
+  .moves-page .moves-period > span { min-width: 20px; }
+  .moves-page .moves-table td.moves-product,
+  .moves-page .moves-table td.moves-place,
+  .moves-page .moves-table td.moves-kind { row-gap: 2px; }
+  .moves-page .moves-user { width: 100%; }
+  .moves-page .moves-table td.stack-title,
+  .moves-page .moves-table td.moves-product,
+  .moves-page .moves-table td.moves-kind { display: flex; }
+  .moves-page .moves-table td.moves-product { flex-wrap: wrap; }
+  .moves-page .moves-table td.moves-product > span:first-child { flex: 1; text-align: right; }
+  .moves-page .moves-table td.moves-product > .moves-sub { flex-basis: 100%; text-align: right; margin-top: 0; }
+  .moves-page .moves-table td.moves-kind::before { margin-right: auto; }
+  .moves-page .moves-day, .moves-page .moves-time { display: inline; font-size: inherit; color: inherit; }
+  .moves-page .moves-table td.num .moves-sub { display: inline; margin-left: 6px; }
+  .moves-page .moves-table td.stack-title .moves-sub { flex-basis: 100%; }
+  .moves-page .moves-product { min-width: 0; max-width: none; }
+  .moves-page .moves-table td.moves-place { display: flex; min-width: 0; flex-wrap: wrap; justify-content: flex-end; column-gap: 6px; }
+  .moves-page .moves-table td.moves-place::before { margin-right: auto; }
+  .moves-page .moves-team { margin-top: 0; flex-basis: 100%; text-align: right; }
+  .moves-page .moves-kind { flex-wrap: wrap; justify-content: flex-end; }
 }
 
 @media (max-width: 700px) {

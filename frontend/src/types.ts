@@ -95,3 +95,31 @@ export interface DailyTask {
   orderItem?: OrderItem & { order?: Order; product?: Product & { category?: ProductCategory & { workshop?: Workshop } } }
   team?: Team | null
 }
+
+// «Реестр переносов»: ручные переносы, разбивки, снятия с графика и возвраты
+export type PlanMoveKind = 'move' | 'moveWhole' | 'split' | 'remove' | 'removeWhole' | 'return'
+
+export interface PlanMove {
+  id: string
+  createdAt: string
+  createdBy: string | null
+  kind: PlanMoveKind
+  orderItemId: string
+  orderId: string
+  orderNumber: string
+  customer: string
+  productCode: string
+  productName: string
+  qty: number
+  days: number
+  fromDate: string | null
+  fromDateEnd: string | null
+  fromTeamName: string | null
+  toDate: string | null
+  toDateEnd: string | null
+  toTeamName: string | null
+  filled: boolean | null
+  returnMode: 'fifo' | 'date' | null
+  undoneAt: string | null
+  undoneBy: string | null
+}

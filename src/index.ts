@@ -513,6 +513,68 @@ function manualStamp(req: Request) {
   return { manualAt: new Date(), manualBy: req.user?.email ?? null };
 }
 
+// Запись в «Реестр переносов». Ошибка записи не должна ломать сам перенос — только в лог
+type MoveEntry = {
+  kind: "move" | "moveWhole" | "split" | "remove" | "removeWhole" | "return";
+  orderItemId: string;
+  qty: number;
+  days?: number;
+  from?: Date[];
+  fromTeamIds?: (string | null)[];
+  to?: Date[];
+  toTeamId?: string | null;
+  filled?: boolean;
+  returnMode?: "fifo" | "date";
+  snapshotId?: string;
+};
+async function logMove(req: Request, e: MoveEntry): Promise<string | null> {
+  try {
+    const item = await prisma.orderItem.findUnique({
+      where: { id: e.orderItemId },
+      select: { order: { select: { id: true, orderNumber: true, customer: true, companyId: true } }, product: { select: { code: true, name: true } } },
+    });
+    if (!item) return null;
+    const ids = [...new Set([...(e.fromTeamIds ?? []), e.toTeamId ?? null].filter((t): t is string => !!t))];
+    const names = new Map((await prisma.team.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })).map(t => [t.id, t.name]));
+    const teamNames = (tids: (string | null)[] | undefined) => {
+      const list = [...new Set((tids ?? []).map(t => (t ? names.get(t) ?? null : null)).filter((n): n is string => !!n))];
+      return list.length ? list.join(", ") : null;
+    };
+    const span = (ds?: Date[]) => {
+      if (!ds?.length) return [null, null] as const;
+      const ms = ds.map(d => d.getTime());
+      const lo = Math.min(...ms), hi = Math.max(...ms);
+      return [new Date(lo), hi > lo ? new Date(hi) : null] as const;
+    };
+    const [fromDate, fromDateEnd] = span(e.from);
+    const [toDate, toDateEnd] = span(e.to);
+    const row = await prisma.planMove.create({
+      data: {
+        companyId: item.order.companyId, createdBy: req.user?.email ?? null, kind: e.kind,
+        orderItemId: e.orderItemId, orderId: item.order.id, orderNumber: item.order.orderNumber, customer: item.order.customer,
+        productCode: item.product.code, productName: item.product.name, qty: e.qty, days: e.days ?? 1,
+        fromDate, fromDateEnd, fromTeamName: teamNames(e.fromTeamIds),
+        toDate, toDateEnd, toTeamName: teamNames(e.toTeamId !== undefined ? [e.toTeamId] : undefined),
+        filled: e.filled ?? null, returnMode: e.returnMode ?? null, snapshotId: e.snapshotId ?? null,
+      },
+    });
+    return row.id;
+  } catch (err) {
+    console.error("logMove failed", err);
+    return null;
+  }
+}
+
+// «Отменить» сработало — запись реестра остаётся, но помечается отменённой (кем и когда)
+async function markMoveUndone(req: Request, where: { id?: string; snapshotId?: string }) {
+  const key = where.id ? { id: where.id } : where.snapshotId ? { snapshotId: where.snapshotId } : null;
+  if (!key) return;
+  await prisma.planMove.updateMany({
+    where: { companyId: req.user!.companyId, undoneAt: null, ...key },
+    data: { undoneAt: new Date(), undoneBy: req.user?.email ?? null },
+  }).catch(err => console.error("markMoveUndone failed", err));
+}
+
 // Перенос «не заполняя освободившееся место»: в ячейке позиции на старый день показываем «оставлено пустым»
 // (только если в этот день у позиции не осталось задачи — например, с фактом)
 async function markEmptySlots(orderItemId: string, slots: { date: Date; teamId: string | null }[], by: string | null) {
@@ -2699,8 +2761,13 @@ app.post("/order-items/:id/return", async (req: Request, res: Response) => {
     : [];
   // Сколько встало: прирост плана позиции (задача в день, где позиция уже стояла, дописывается к ней)
   const aggAfter = await prisma.dailyTask.aggregate({ where: { orderItemId: id, actualQuantity: null }, _sum: { plannedQuantity: true } });
+  const returnedQty = (aggAfter._sum.plannedQuantity ?? 0) - (agg._sum.plannedQuantity ?? 0);
+  await logMove(req, {
+    kind: "return", orderItemId: id, qty: returnedQty, days: tasks.length,
+    to: tasks.map(t => t.date), toTeamId: teamId, returnMode: mode, snapshotId: undoId,
+  });
   res.json({
-    qty: (aggAfter._sum.plannedQuantity ?? 0) - (agg._sum.plannedQuantity ?? 0),
+    qty: returnedQty,
     gap,
     firstDate: tasks[0]?.date.toISOString().slice(0, 10) ?? null,
     lastDate: tasks[tasks.length - 1]?.date.toISOString().slice(0, 10) ?? null,
@@ -2748,7 +2815,22 @@ async function restoreSnapshot(companyId: string, snapId: string): Promise<{ ok:
 app.post("/plan-snapshots/:id/restore", async (req: Request, res: Response) => {
   const r = await restoreSnapshot(req.user!.companyId, String(req.params.id));
   if (!r.ok) return res.status(r.status).json({ error: r.error });
+  await markMoveUndone(req, { snapshotId: String(req.params.id) });
   res.json({ restored: r.restored });
+});
+
+// «Реестр переносов» за период по времени действия: ?from=&to= — ISO-моменты (границы дней считает браузер
+// в своём часовом поясе), по умолчанию последние 30 дней
+app.get("/plan-moves", async (req: Request, res: Response) => {
+  const at = (s: unknown) => { const d = typeof s === "string" ? new Date(s) : null; return d && !isNaN(d.getTime()) ? d : null; };
+  const to = at(req.query.to) ?? new Date();
+  const from = at(req.query.from) ?? new Date(to.getTime() - 30 * 86400000);
+  const rows = await prisma.planMove.findMany({
+    where: { companyId: req.user!.companyId, createdAt: { gte: from, lt: to } },
+    orderBy: { createdAt: "desc" },
+    take: 5000,
+  });
+  res.json(rows);
 });
 
 app.get("/order-items/:id/remaining", async (req: Request, res: Response) => {
@@ -3059,6 +3141,8 @@ app.post("/daily-tasks", async (req: Request, res: Response) => {
         team: true,
       },
     });
+    // «Отменить» снятие с графика восстанавливает задачи этим же запросом — запись реестра помечаем отменённой
+    if (typeof req.body.undoOf === "string") await markMoveUndone(req, { id: req.body.undoOf });
     res.status(201).json(task);
   } catch (err: any) {
     if (err.code === "P2002") {
@@ -3172,6 +3256,12 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
         await restoreSnapshot(req.user!.companyId, undoId);
         return res.status(400).json({ error: "Не получилось перенести позицию целиком: у бригады нет свободной мощности на этот товар" });
       }
+      const placedDates = (await prisma.dailyTask.findMany({ where: { id: { in: placed } }, select: { date: true } })).map(t => t.date);
+      await logMove(req, {
+        kind: "moveWhole", orderItemId: current.orderItemId, qty, days: itemTasks.length,
+        from: itemTasks.map(t => t.date), fromTeamIds: itemTasks.map(t => t.teamId),
+        to: placedDates.length ? placedDates : [targetDate], toTeamId: targetTeamId, filled: fill, snapshotId: undoId,
+      });
       return res.json({ id: placed[0] ?? null, wholeItem: true, qty, days: itemTasks.length, autoAdjust: true, cascade, undoId });
     }
 
@@ -3235,7 +3325,17 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       }
     }
 
-    res.json({ ...task, autoAdjust: dateChanged || teamChanged, cascade });
+    // Реестр переносов: «Отменить» (undoOf) не пишет новую строку, а помечает отменённой исходную
+    let moveId: string | null = null;
+    if (dateChanged || teamChanged) {
+      if (typeof req.body.undoOf === "string") await markMoveUndone(req, { id: req.body.undoOf });
+      else moveId = await logMove(req, {
+        kind: "move", orderItemId: current.orderItemId, qty: data.plannedQuantity ?? current.plannedQuantity,
+        from: [current.date], fromTeamIds: [current.teamId], to: [task.date], toTeamId: task.teamId, filled: fill,
+      });
+    }
+
+    res.json({ ...task, autoAdjust: dateChanged || teamChanged, cascade, moveId });
   } catch (err: any) {
     if (err.code === "P2002") {
       res.status(409).json({ error: "Task for this order item and date already exists" });
@@ -3281,7 +3381,13 @@ app.delete("/daily-tasks/:id", async (req: Request, res: Response) => {
         data: { offPlanQty: { increment: removed }, offPlanAt: new Date(), offPlanBy: req.user?.email ?? null, offPlanTeamId: task.teamId },
       });
     }
-    res.json({ removed, deleted });
+    const moveId = removed > 0
+      ? await logMove(req, {
+          kind: whole ? "removeWhole" : "remove", orderItemId: task.orderItemId, qty: removed, days: deleted.length,
+          from: deleted.map(t => t.date), fromTeamIds: deleted.map(t => t.teamId),
+        })
+      : null;
+    res.json({ removed, deleted, moveId });
   } catch (err) {
     res.status(404).json({ error: "Daily task not found" });
   }
@@ -3348,6 +3454,10 @@ app.post("/daily-tasks/:id/split", async (req: Request, res: Response) => {
       include: { orderItem: { include: { order: true, product: { include: { category: { include: { workshop: true } } } } } }, team: true },
     });
 
+    await logMove(req, {
+      kind: "split", orderItemId: original.orderItemId, qty: qty2,
+      from: [original.date], fromTeamIds: [original.teamId], to: [targetDate], toTeamId: original.teamId,
+    });
     res.json({ task1, task2 });
   } catch (err: any) {
     if (err.code === "P2002") {

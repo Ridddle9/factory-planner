@@ -16,6 +16,7 @@ import Planning from './pages/Planning'
 import Import from './pages/Import'
 import Onboarding from './pages/Onboarding'
 import Assistant from './pages/Assistant'
+import Moves from './pages/Moves'
 
 function OnboardingRoute() {
   const { user, loading } = useAuth()
@@ -49,6 +50,7 @@ function ProtectedRoutes() {
         <Route path="/orders/:id" element={<OrderDetail />} />
         <Route path="/plan" element={<DailyPlan />} />
         <Route path="/schedule" element={<Schedule />} />
+        <Route path="/moves" element={<Moves />} />
         <Route path="/planning" element={<Planning />} />
         <Route path="/import" element={<Import />} />
         <Route path="/assistant" element={<Assistant />} />

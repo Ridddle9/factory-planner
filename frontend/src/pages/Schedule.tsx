@@ -527,10 +527,10 @@ export default function Schedule() {
       const taskId = popup.cell.taskId
       // Без изменений — не сохраняем, иначе задача зря станет ручной
       if (editQty !== prevQty || (editTeamId || null) !== prevTeamId) {
-        await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: editQty, teamId: editTeamId || null })
+        const { data: upd } = await api.put<{ moveId?: string | null }>(`/daily-tasks/${taskId}`, { plannedQuantity: editQty, teamId: editTeamId || null })
         setUndoAction({
           label: `Вернуть ${prevQty} шт.`,
-          fn: async () => { await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: prevQty, teamId: prevTeamId, manuallyPlaced: prevManual }) },
+          fn: async () => { await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: prevQty, teamId: prevTeamId, manuallyPlaced: prevManual, undoOf: upd?.moveId ?? undefined }) },
         })
       }
     } else {
@@ -560,15 +560,16 @@ export default function Schedule() {
     const { taskId } = popup.cell
     const orderItemId = popup.rowId
     const row = rows.find(r => r.orderItemId === orderItemId)
-    const { data, error: e } = await api.delete(`/daily-tasks/${taskId}${whole ? '?whole=1' : ''}`) as { data?: { removed: number; deleted: { date: string; teamId: string | null; plannedQuantity: number }[] }; error?: string }
+    const { data, error: e } = await api.delete(`/daily-tasks/${taskId}${whole ? '?whole=1' : ''}`) as { data?: { removed: number; deleted: { date: string; teamId: string | null; plannedQuantity: number }[]; moveId?: string | null }; error?: string }
     if (e) { setError(e); return }
     const deleted = data?.deleted ?? []
     if ((data?.removed ?? 0) > 0) setPlanResult(`${row?.orderNumber ?? ''} · ${data!.removed} шт сняты с графика — позиция в списке «Не в графике».`)
     setUndoAction(deleted.length ? {
       label: `Восстановить ${deleted.reduce((s, t) => s + t.plannedQuantity, 0)} шт.`,
       fn: async () => {
-        for (const t of deleted) {
-          await api.post('/daily-tasks', { orderItemId, date: t.date, plannedQuantity: t.plannedQuantity, teamId: t.teamId || undefined })
+        // undoOf — запись «Снято с графика» в реестре переносов станет отменённой
+        for (const [i, t] of deleted.entries()) {
+          await api.post('/daily-tasks', { orderItemId, date: t.date, plannedQuantity: t.plannedQuantity, teamId: t.teamId || undefined, ...(i === 0 && data?.moveId ? { undoOf: data.moveId } : {}) })
         }
       },
     } : null)
@@ -668,7 +669,7 @@ export default function Schedule() {
     const body: Record<string, unknown> = { fill: d.fill, ...(whole ? { wholeItem: true } : {}) }
     if (d.date !== d.fromDate) body.date = new Date(d.date).toISOString()
     if ((d.teamId || null) !== d.fromTeamId) body.teamId = d.teamId || null
-    const { data, error: e } = await api.put<{ id: string; cascade: Cascade | null; undoId?: string }>(`/daily-tasks/${d.taskId}`, body)
+    const { data, error: e } = await api.put<{ id: string; cascade: Cascade | null; undoId?: string; moveId?: string | null }>(`/daily-tasks/${d.taskId}`, body)
     setSaving(false)
     if (e) { setError(e); return }
     setMoveDialog(null)
@@ -682,7 +683,7 @@ export default function Schedule() {
     setUndoAction({
       label: `Вернуть на ${formatDateShort(d.fromDate)}`,
       // Возврат — в том же режиме: если место не заполняли, обратно тоже ничего не подтягиваем
-      fn: async () => { await api.put(`/daily-tasks/${movedId}`, { date: new Date(d.fromDate).toISOString(), teamId: d.fromTeamId, manuallyPlaced: d.manual, fill: d.fill }) },
+      fn: async () => { await api.put(`/daily-tasks/${movedId}`, { date: new Date(d.fromDate).toISOString(), teamId: d.fromTeamId, manuallyPlaced: d.manual, fill: d.fill, undoOf: data?.moveId ?? undefined }) },
     })
     loadPlan()
   }

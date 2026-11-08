@@ -254,3 +254,35 @@ model PlanSnapshot {
   item        String   // JSON: offPlan* и пометки «оставлено пустым» позиции до действия
   fingerprint String
 }
+
+// Реестр переносов: что, откуда, куда и кем перенесено вручную (перенос, разбивка, снятие с графика,
+// возврат). Номер заказа, товар и бригады записаны текстом — запись остаётся, даже если заказ закрыли в 1С.
+// kind: move | moveWhole | split | remove | removeWhole | return
+model PlanMove {
+  id           String    @id @default(cuid())
+  companyId    String
+  createdAt    DateTime  @default(now())
+  createdBy    String?
+  kind         String
+  orderItemId  String
+  orderId      String
+  orderNumber  String
+  customer     String
+  productCode  String
+  productName  String
+  qty          Int
+  days         Int       @default(1)
+  fromDate     DateTime?
+  fromDateEnd  DateTime?
+  fromTeamName String?
+  toDate       DateTime?
+  toDateEnd    DateTime?
+  toTeamName   String?
+  filled       Boolean? // перенос: заполнили освободившееся место очередью или оставили пустым
+  returnMode   String?  // возврат: fifo | date
+  snapshotId   String?  // «Отменить» через снимок плана помечает запись отменённой
+  undoneAt     DateTime?
+  undoneBy     String?
+
+  @@index([companyId, createdAt])
+}
