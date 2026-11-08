@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { ChartBar } from '@phosphor-icons/react/dist/csr/ChartBar'
 import { CalendarBlank } from '@phosphor-icons/react/dist/csr/CalendarBlank'
-import { ArrowsLeftRight } from '@phosphor-icons/react/dist/csr/ArrowsLeftRight'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots'
 import { SquaresFour } from '@phosphor-icons/react/dist/csr/SquaresFour'
 import { Stack } from '@phosphor-icons/react/dist/csr/Stack'
@@ -19,7 +18,6 @@ const sections = [
   { title: 'Рабочее пространство', items: [
     { to: '/orders', title: 'Заказы', icon: ClipboardText },
     { to: '/schedule', title: 'График', icon: CalendarBlank },
-    { to: '/moves', title: 'Реестр переносов', icon: ArrowsLeftRight },
     { to: '/planning', title: 'Аналитика', icon: ChartBar },
     { to: '/assistant', title: 'Помощник', icon: ChatCircleDots },
   ] },

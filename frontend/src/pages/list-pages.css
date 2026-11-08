@@ -159,12 +159,13 @@
 .moves-page .moves-time { display: block; color: var(--text-muted); font-size: 12px; }
 .moves-page .moves-when,
 .moves-page .moves-who { white-space: nowrap; color: var(--text-secondary); font-size: 13px; }
-.moves-page .moves-product { min-width: 190px; max-width: 260px; }
+.moves-page .moves-product { min-width: 180px; max-width: 240px; }
 .moves-page .moves-table td.moves-place { display: table-cell; min-width: 130px; }
 .moves-page .moves-date { display: block; white-space: nowrap; }
 .moves-page .moves-team { display: block; margin-top: 2px; color: var(--text-secondary); font-size: 13px; }
 .moves-page .moves-off { color: var(--text-muted); }
 .moves-page .moves-kind .badge { white-space: nowrap; }
+.moves-page td.moves-who { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
 .moves-page tr.is-undone td { color: var(--text-muted); }
 .moves-page tr.is-undone td.stack-title a { color: var(--text-muted); text-decoration: line-through; }
 

@@ -30,7 +30,9 @@ const when = (iso: string) => new Date(iso).toLocaleString('ru-RU', { day: '2-di
 const whenDay = (iso: string) => new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })
 const whenTime = (iso: string) => new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 
-export default function Moves() {
+// «Реестр переносов» — панель в «Графике» рядом с «Не в графике». reloadKey — план графика:
+// после переноса, снятия или возврата список перечитывается
+export default function MovesPanel({ reloadKey }: { reloadKey: unknown }) {
   const [list, setList] = useState<PlanMove[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +45,6 @@ export default function Moves() {
   useEffect(() => {
     if (!from || !to) return
     let cancelled = false
-    setLoading(true)
     // Границы дней — в часовом поясе браузера: «по» включительно
     const start = new Date(`${from}T00:00:00`)
     const end = new Date(`${to}T00:00:00`)
@@ -56,7 +57,7 @@ export default function Moves() {
       setList(data ?? [])
     })
     return () => { cancelled = true }
-  }, [from, to])
+  }, [from, to, reloadKey])
 
   const users = useMemo(() => [...new Set(list.map(m => m.createdBy).filter((u): u is string => !!u))].sort(), [list])
 
@@ -100,14 +101,12 @@ export default function Moves() {
 
   return (
     <div className="list-page moves-page">
-      <div className="page-heading">
-        <div>
-          <h1 className="page-title">Реестр переносов</h1>
-          <p className="page-description">Что, откуда, куда и кем перенесено в графике: переносы, разбивки, снятия с графика и возвраты.</p>
+      <div className="card list-card off-schedule">
+        <div className="off-schedule-head">
+          <h2 className="card-title" style={{ margin: 0 }}>Реестр переносов</h2>
+          <p>Что, откуда, куда и кем перенесено в графике: переносы, разбивки, снятия с графика и возвраты. Отменённые действия остаются в списке с пометкой «отменено».</p>
         </div>
-      </div>
-      {error && <div className="error">{error}</div>}
-      <div className="card list-card">
+        {error && <div className="error" style={{ margin: '16px 24px 0' }}>{error}</div>}
         <div className="list-tabs list-tabs-inset">
           {tabs.map(({ t, label }) => (
             <button key={t} style={tabStyle(t)} onClick={() => setTab(t)}>

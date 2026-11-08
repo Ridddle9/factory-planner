@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { api } from '../api'
 import './planning.css'
+import MovesPanel from './MovesPanel'
 import type { DailyTask, Order, OrderItem, Team, Workshop } from '../types'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 import { CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown'
@@ -178,6 +179,7 @@ export default function Schedule() {
   }
   const [emptySlots, setEmptySlots] = useState<EmptySlot[]>([])
   const [showOff, setShowOff] = useState(false)
+  const [showMoves, setShowMoves] = useState(false)
   type ReturnDialog = { item: OffItem; mode: 'fifo' | 'date'; date: string; teamId: string }
   const [returnDialog, setReturnDialog] = useState<ReturnDialog | null>(null)
   const [returnTeams, setReturnTeams] = useState<{ teamId: string; teamName: string; perDay: number }[]>([])
@@ -790,6 +792,9 @@ export default function Schedule() {
               {showOff ? 'Скрыть «Не в графике»' : 'Не в графике'}
               {!showOff && offItems.length > 0 && <span className="badge badge-warning" style={{ marginLeft: 6 }}>{offItems.length}</span>}
             </button>
+            <button type="button" className="btn btn-secondary btn-sm" aria-expanded={showMoves} onClick={() => setShowMoves(v => !v)}>
+              {showMoves ? 'Скрыть реестр переносов' : 'Реестр переносов'}
+            </button>
           </div>
           <button type="button" className="btn btn-danger btn-sm schedule-clear" onClick={handleClearSchedule} disabled={saving || planningUnplanned || replanning}>
             Очистить график
@@ -892,6 +897,8 @@ export default function Schedule() {
           )}
         </div>
       )}
+
+      {showMoves && <MovesPanel reloadKey={tasks} />}
 
       {noTeamCategories !== null && (
         <div className="card" style={{ marginBottom: 10, padding: '12px 16px' }}>
