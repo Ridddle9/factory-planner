@@ -176,6 +176,12 @@ model OrderItem {
   quantity    Int
   groupNumber Int?
   transferDate DateTime? // Дата передачи строки (рткДатаПередачи, МАКСИМУМ по строкам товара) — ключ очереди; null — берётся дата заказа, без неё — сегодня
+  // Снято с графика вручную (удаление задачи): столько штук автоматика сама не планирует,
+  // пока позицию не вернут из списка «Не в графике». Кто, когда и с какой бригады сняли
+  offPlanQty    Int       @default(0)
+  offPlanAt     DateTime?
+  offPlanBy     String?
+  offPlanTeamId String?
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)

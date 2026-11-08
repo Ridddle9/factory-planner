@@ -144,8 +144,9 @@ export default function Schedule() {
   const [mobileDate, setMobileDate] = useState(today)
   const [showActions, setShowActions] = useState(false)
   // Окно «Перенос задачи»: дата и бригада вводятся, а не выбираются кликом по клетке
-  // fill — занимать ли освободившееся место следующими задачами бригады (последний выбор помним)
-  type MoveDialog = { taskId: string; rowId: string; fromDate: string; fromTeamId: string | null; qty: number; manual: boolean; date: string; teamId: string; fill: boolean }
+  // fill — занимать ли освободившееся место следующими задачами бригады (последний выбор помним);
+  // whole — перенести позицию целиком (все её дни без факта: wholeDays дней, wholeQty шт)
+  type MoveDialog = { taskId: string; rowId: string; fromDate: string; fromTeamId: string | null; qty: number; manual: boolean; date: string; teamId: string; fill: boolean; whole: boolean; wholeDays: number; wholeQty: number }
   const [moveDialog, setMoveDialog] = useState<MoveDialog | null>(null)
   const [moveTeams, setMoveTeams] = useState<{ teamId: string; teamName: string; perDay: number }[]>([])
   const [moveTargetLoad, setMoveTargetLoad] = useState<TeamLoad | null>(null)
@@ -157,8 +158,23 @@ export default function Schedule() {
     mergedIntoOwn: boolean
     filled: boolean
   }
-  type MoveResult = Cascade & { title: string; freedDate: string; targetDate: string }
+  type MoveResult = Cascade & { title: string; freedDate: string; targetDate: string; heading?: string }
   const [moveResult, setMoveResult] = useState<MoveResult | null>(null)
+  // Сколько у позиции в графике (дни, штуки) — для галочки «вся позиция» в окне задачи
+  const [planSummary, setPlanSummary] = useState<{ days: number; qty: number } | null>(null)
+  const [deleteWhole, setDeleteWhole] = useState(false)
+  // «Не в графике»: позиции, у которых часть количества не стоит в плане (сняли вручную и т. п.)
+  type OffItem = {
+    orderItemId: string; orderNumber: string; customer: string; productCode: string; productName: string; categoryName: string
+    transferDate: string | null; quantity: number; planned: number; gap: number; manualQty: number
+    offPlanAt: string | null; offPlanBy: string | null; offPlanTeamId: string | null; offPlanTeamName: string | null
+    reason: 'manual' | 'unplanned' | 'noTeam'
+  }
+  const [offItems, setOffItems] = useState<OffItem[]>([])
+  const [showOff, setShowOff] = useState(false)
+  type ReturnDialog = { item: OffItem; mode: 'fifo' | 'date'; date: string; teamId: string }
+  const [returnDialog, setReturnDialog] = useState<ReturnDialog | null>(null)
+  const [returnTeams, setReturnTeams] = useState<{ teamId: string; teamName: string; perDay: number }[]>([])
 
 
   // Undo
@@ -309,6 +325,13 @@ export default function Schedule() {
     setError(null)
   }, [dateFrom, dateTo, workshopId, teamId, orderId])
 
+  // Список «Не в графике» обновляется вместе с планом (удаление, перенос, «Запланировать»)
+  const loadOffSchedule = useCallback(async () => {
+    const { data } = await api.get<OffItem[]>('/order-items/off-schedule')
+    setOffItems(data ?? [])
+  }, [])
+  useEffect(() => { loadOffSchedule() }, [tasks, loadOffSchedule])
+
   useEffect(() => { loadFilters() }, [])
   useEffect(() => { loadPlan() }, [loadPlan])
 
@@ -458,6 +481,9 @@ export default function Schedule() {
     setSplitQty2(cell ? Math.floor(cell.plannedQuantity / 2) : 0)
     setSplitDate2(todayISO())
     setSplitLoad(null)
+    setDeleteWhole(false)
+    setPlanSummary(null)
+    if (cell) api.get<{ days: number; qty: number }>(`/order-items/${row.orderItemId}/plan-summary`).then(({ data }) => setPlanSummary(data ?? null))
     setPopup({
       rowId: row.orderItemId,
       date,
@@ -502,25 +528,60 @@ export default function Schedule() {
     loadPlan()
   }
 
+  // Удалить задачу (или позицию целиком — все дни). Снятое попадает в «Не в графике», автоматика его не вернёт
   const handleDelete = async () => {
     if (!popup?.cell) return
-    if (!confirm('Удалить задачу?')) return
-    const { taskId, plannedQuantity, teamId: tId } = popup.cell
+    const whole = deleteWhole && (planSummary?.days ?? 0) > 1
+    if (!confirm(whole ? `Снять с графика всю позицию — ${planSummary!.days} дн., ${planSummary!.qty} шт?` : 'Удалить задачу?')) return
+    const { taskId } = popup.cell
     const orderItemId = popup.rowId
-    const date = popup.date
-    await api.delete(`/daily-tasks/${taskId}`)
-    setUndoAction({
-      label: `Восстановить ${plannedQuantity} шт.`,
+    const row = rows.find(r => r.orderItemId === orderItemId)
+    const { data, error: e } = await api.delete(`/daily-tasks/${taskId}${whole ? '?whole=1' : ''}`) as { data?: { removed: number; deleted: { date: string; teamId: string | null; plannedQuantity: number }[] }; error?: string }
+    if (e) { setError(e); return }
+    const deleted = data?.deleted ?? []
+    if ((data?.removed ?? 0) > 0) setPlanResult(`${row?.orderNumber ?? ''} · ${data!.removed} шт сняты с графика — позиция в списке «Не в графике».`)
+    setUndoAction(deleted.length ? {
+      label: `Восстановить ${deleted.reduce((s, t) => s + t.plannedQuantity, 0)} шт.`,
       fn: async () => {
-        await api.post('/daily-tasks', {
-          orderItemId,
-          date: new Date(date).toISOString(),
-          plannedQuantity,
-          teamId: tId || undefined,
-        })
+        for (const t of deleted) {
+          await api.post('/daily-tasks', { orderItemId, date: t.date, plannedQuantity: t.plannedQuantity, teamId: t.teamId || undefined })
+        }
       },
-    })
+    } : null)
     closePopup()
+    loadPlan()
+  }
+
+  // «Вернуть в график» из списка «Не в графике»: в очередь (FIFO) или с конкретной даты
+  const openReturn = async (item: OffItem) => {
+    setReturnDialog({ item, mode: 'fifo', date: todayISO(), teamId: item.offPlanTeamId ?? '' })
+    const { data } = await api.get<{ teamId: string; teamName: string; perDay: number }[]>(`/order-items/${item.orderItemId}/teams`)
+    setReturnTeams(data ?? [])
+    const first = data?.[0]?.teamId ?? ''
+    setReturnDialog(d => d && d.item.orderItemId === item.orderItemId && !d.teamId ? { ...d, teamId: first } : d)
+  }
+
+  const submitReturn = async () => {
+    if (!returnDialog) return
+    const d = returnDialog
+    setSaving(true)
+    const { data, error: e } = await api.post<{ qty: number; firstDate: string | null; lastDate: string | null; teamId: string | null; cascade: Cascade }>(
+      `/order-items/${d.item.orderItemId}/return`,
+      { mode: d.mode, teamId: d.teamId, ...(d.mode === 'date' ? { date: new Date(d.date).toISOString() } : {}) },
+    )
+    setSaving(false)
+    if (e) { setError(e); return }
+    setReturnDialog(null)
+    const teamName = teams.find(t => t.id === (data?.teamId ?? d.teamId))?.name ?? ''
+    const first = data?.firstDate, last = data?.lastDate
+    const when = first ? (first === last || !last ? formatDateShort(first) : `${formatDateShort(first)}–${formatDateShort(last)}`) : ''
+    setMoveResult({
+      heading: 'Позиция возвращена в график',
+      title: `${d.item.orderNumber} · ${data?.qty ?? d.item.gap} шт${when ? ` — ${when}` : ''}${teamName ? `, ${teamName}` : ''}`,
+      shifted: data?.cascade?.shifted ?? [], pulled: [], overload: null, mergedIntoOwn: false, filled: true,
+      freedDate: first ?? d.date, targetDate: first ?? d.date,
+    })
+    setUndoAction(null)
     loadPlan()
   }
 
@@ -540,11 +601,16 @@ export default function Schedule() {
   const startMove = async () => {
     if (!popup?.cell) return
     const c = popup.cell
-    setMoveDialog({ taskId: c.taskId, rowId: popup.rowId, fromDate: popup.date, fromTeamId: c.teamId, qty: c.plannedQuantity, manual: c.manual, date: popup.date, teamId: c.teamId ?? '', fill: loadMoveFill() })
+    const rowId = popup.rowId
+    setMoveDialog({ taskId: c.taskId, rowId, fromDate: popup.date, fromTeamId: c.teamId, qty: c.plannedQuantity, manual: c.manual, date: popup.date, teamId: c.teamId ?? '', fill: loadMoveFill(), whole: false, wholeDays: planSummary?.days ?? 1, wholeQty: planSummary?.qty ?? c.plannedQuantity })
     setMoveTargetLoad(null)
     setPopup(null)
-    const { data } = await api.get<{ teamId: string; teamName: string; perDay: number }[]>(`/order-items/${popup.rowId}/teams`)
+    const [{ data }, { data: sum }] = await Promise.all([
+      api.get<{ teamId: string; teamName: string; perDay: number }[]>(`/order-items/${rowId}/teams`),
+      api.get<{ days: number; qty: number }>(`/order-items/${rowId}/plan-summary`),
+    ])
     setMoveTeams(data ?? [])
+    if (sum) setMoveDialog(d => d && d.taskId === c.taskId ? { ...d, wholeDays: sum.days, wholeQty: sum.qty } : d)
   }
 
   // Загрузка выбранной бригады в выбранный день — чтобы было видно, хватит ли места
@@ -565,7 +631,8 @@ export default function Schedule() {
     if (d.date === d.fromDate && (d.teamId || null) === d.fromTeamId) { setMoveDialog(null); return }
     setSaving(true)
     saveMoveFill(d.fill)
-    const body: Record<string, unknown> = { fill: d.fill }
+    const whole = d.whole && d.wholeDays > 1
+    const body: Record<string, unknown> = { fill: d.fill, ...(whole ? { wholeItem: true } : {}) }
     if (d.date !== d.fromDate) body.date = new Date(d.date).toISOString()
     if ((d.teamId || null) !== d.fromTeamId) body.teamId = d.teamId || null
     const { data, error: e } = await api.put<{ id: string; cascade: Cascade | null }>(`/daily-tasks/${d.taskId}`, body)
@@ -575,7 +642,9 @@ export default function Schedule() {
     const teamName = (id: string | null) => teams.find(t => t.id === id)?.name ?? 'без бригады'
     const row = rows.find(r => r.orderItemId === d.rowId)
     const where = [d.date !== d.fromDate ? `на ${formatDateShort(d.date)}` : '', (d.teamId || null) !== d.fromTeamId ? `в ${teamName(d.teamId || null)}` : ''].filter(Boolean).join(' ')
-    showCascade(`${row?.orderNumber ?? ''} · ${d.qty} шт перенесены ${where}`, data?.cascade, d.fromDate, d.date)
+    showCascade(`${row?.orderNumber ?? ''} · ${whole ? `вся позиция, ${d.wholeQty} шт,` : `${d.qty} шт`} перенесены ${where}`, data?.cascade, d.fromDate, d.date)
+    // Позицию целиком назад одной кнопкой не вернуть (её дни могли быть в разных бригадах) — без «Отменить»
+    if (whole) { setUndoAction(null); loadPlan(); return }
     const movedId = data?.id ?? d.taskId
     setUndoAction({
       label: `Вернуть на ${formatDateShort(d.fromDate)}`,
@@ -682,6 +751,10 @@ export default function Schedule() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={fetchNoTeamCategories} disabled={loadingNoTeam}>
               {loadingNoTeam ? 'Загрузка...' : noTeamCategories !== null ? 'Скрыть список' : 'Категории без бригад'}
             </button>
+            <button type="button" className="btn btn-secondary btn-sm" aria-expanded={showOff} onClick={() => setShowOff(v => !v)}>
+              {showOff ? 'Скрыть «Не в графике»' : 'Не в графике'}
+              {!showOff && offItems.length > 0 && <span className="badge badge-warning" style={{ marginLeft: 6 }}>{offItems.length}</span>}
+            </button>
           </div>
           <button type="button" className="btn btn-danger btn-sm schedule-clear" onClick={handleClearSchedule} disabled={saving || planningUnplanned || replanning}>
             Очистить график
@@ -720,6 +793,68 @@ export default function Schedule() {
           <span>{planResult}</span>
           <button type="button" className="icon-btn" aria-label="Закрыть"
             onClick={() => setPlanResult(null)}><X size={14} weight="bold" aria-hidden="true" /></button>
+        </div>
+      )}
+
+      {showOff && (
+        <div className="card off-schedule">
+          <div className="off-schedule-head">
+            <h2 className="card-title" style={{ margin: 0 }}>Не в графике {offItems.length > 0 && <span className="off-schedule-count">{offItems.length}</span>}</h2>
+            <p>Позиции активных заказов, у которых часть количества не стоит в плане. Снятое вручную автоматика обратно не ставит — только «Вернуть в график».</p>
+          </div>
+          {offItems.length === 0 ? (
+            <div className="empty">Всё количество стоит в графике.</div>
+          ) : (
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Заказ</th>
+                  <th>Товар</th>
+                  <th>Дата передачи</th>
+                  <th style={{ textAlign: 'right' }}>Не в графике</th>
+                  <th>Причина</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {offItems.map(it => (
+                  <tr key={it.orderItemId}>
+                    <td className="stack-title">
+                      <strong>{it.orderNumber}</strong>
+                      <span className="off-sub">{it.customer}</span>
+                    </td>
+                    <td data-label="Товар">
+                      <span className="off-cell">
+                        {it.productName || it.productCode}
+                        <span className="off-sub">{it.productCode}</span>
+                      </span>
+                    </td>
+                    <td data-label="Дата передачи">{it.transferDate ? it.transferDate.split('-').reverse().join('.') : '—'}</td>
+                    <td data-label="Не в графике" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <span className="off-cell"><strong>{it.gap}</strong> из {it.quantity} шт</span>
+                    </td>
+                    <td data-label="Причина">
+                      {it.reason === 'manual' ? (
+                        <span className="off-reason">
+                          <span className="badge badge-warning">Снято вручную{it.manualQty < it.gap ? ` · ${it.manualQty} шт` : ''}</span>
+                          <span className="off-sub">{[it.offPlanBy, it.offPlanAt ? new Date(it.offPlanAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null, it.offPlanTeamName].filter(Boolean).join(' · ')}</span>
+                        </span>
+                      ) : it.reason === 'noTeam' ? (
+                        <span className="badge badge-danger">Нет бригады с нормой</span>
+                      ) : (
+                        <span className="badge badge-neutral">Не запланировано</span>
+                      )}
+                    </td>
+                    <td className="stack-actions" style={{ textAlign: 'right' }}>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={() => openReturn(it)} disabled={it.reason === 'noTeam'}>
+                        Вернуть в график
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -1090,7 +1225,8 @@ export default function Schedule() {
         const d = moveDialog
         const row = rows.find(r => r.orderItemId === d.rowId)
         const norm = moveTeams.find(t => t.teamId === d.teamId)
-        const share = norm && norm.perDay > 0 ? d.qty / norm.perDay : null
+        const moveQty = d.whole && d.wholeDays > 1 ? d.wholeQty : d.qty
+        const share = norm && norm.perDay > 0 ? moveQty / norm.perDay : null
         // Если бригада и день не меняются, задача сама занимает место в этом дне — не считаем её дважды
         const sameSlot = d.date === d.fromDate && (d.teamId || null) === d.fromTeamId
         const free = moveTargetLoad ? moveTargetLoad.effectiveCapacity - moveTargetLoad.load : null
@@ -1103,6 +1239,13 @@ export default function Schedule() {
                 <strong>{row?.orderNumber}</strong> · {row?.productName || row?.productCode}
                 <div>{d.qty} шт · сейчас {formatDateShort(d.fromDate)}, {teams.find(t => t.id === d.fromTeamId)?.name ?? 'без бригады'}</div>
               </div>
+              {d.wholeDays > 1 && (
+                <label className="check-line">
+                  <input type="checkbox" checked={d.whole} onChange={e => setMoveDialog({ ...d, whole: e.target.checked })} />
+                  <span>Перенести позицию целиком — все дни ({d.wholeDays} дн., {d.wholeQty} шт)
+                    <small>Встанет с выбранной даты одним куском</small></span>
+                </label>
+              )}
               <div className="form-panel" style={{ maxWidth: 'none', margin: 0, padding: 0, border: 'none', background: 'none' }}>
                 <label>Дата</label>
                 <input type="date" value={d.date} onChange={e => e.target.value && setMoveDialog({ ...d, date: e.target.value })} autoFocus={!isMobile} />
@@ -1153,11 +1296,67 @@ export default function Schedule() {
         )
       })()}
 
+      {/* Вернуть в график: в очередь (FIFO) или с даты */}
+      {returnDialog && (() => {
+        const d = returnDialog
+        const teamOptions = returnTeams.length > 0
+          ? returnTeams.map(t => ({ id: t.teamId, label: `${t.teamName} — ${t.perDay} шт/день` }))
+          : teams.map(t => ({ id: t.id, label: t.name }))
+        return (
+          <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setReturnDialog(null) }}>
+            <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="return-title">
+              <h3 id="return-title" className="form-panel-title">Вернуть в график</h3>
+              <div className="move-summary">
+                <strong>{d.item.orderNumber}</strong> · {d.item.productName || d.item.productCode}
+                <div>Не в графике {d.item.gap} из {d.item.quantity} шт{d.item.transferDate ? ` · дата передачи ${d.item.transferDate.split('-').reverse().join('.')}` : ''}</div>
+              </div>
+              <fieldset className="choice-group">
+                <legend>Куда поставить</legend>
+                <label className={d.mode === 'fifo' ? 'choice active' : 'choice'}>
+                  <input type="radio" name="return-mode" checked={d.mode === 'fifo'} onChange={() => setReturnDialog({ ...d, mode: 'fifo' })} />
+                  <span>
+                    <strong>В очередь (FIFO)</strong>
+                    <small>Встанет на своё место по дате передачи; задачи позже по очереди сдвинутся вправо</small>
+                  </span>
+                </label>
+                <label className={d.mode === 'date' ? 'choice active' : 'choice'}>
+                  <input type="radio" name="return-mode" checked={d.mode === 'date'} onChange={() => setReturnDialog({ ...d, mode: 'date' })} />
+                  <span>
+                    <strong>На дату</strong>
+                    <small>Встанет с выбранного дня и закрепится; остальные задачи бригады сдвинутся вправо</small>
+                  </span>
+                </label>
+              </fieldset>
+              <div className="form-panel" style={{ maxWidth: 'none', margin: 0, padding: 0, border: 'none', background: 'none' }}>
+                {d.mode === 'date' && (
+                  <>
+                    <label>Дата</label>
+                    <input type="date" value={d.date} min={todayISO()} onChange={e => e.target.value && setReturnDialog({ ...d, date: e.target.value })} />
+                  </>
+                )}
+                <label>Бригада</label>
+                <select value={d.teamId} onChange={e => setReturnDialog({ ...d, teamId: e.target.value })}>
+                  {!d.teamId && <option value="">— выберите —</option>}
+                  {teamOptions.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+              </div>
+              {d.mode === 'date' && isOffDay(d.date) && <div className="move-note move-note-warn">Это нерабочий день — позиция встанет с ближайшего рабочего.</div>}
+              <div className="form-actions">
+                <button type="button" className="btn btn-primary" onClick={submitReturn} disabled={saving || !d.teamId || (d.mode === 'date' && !d.date)}>
+                  {saving ? 'Ставим…' : 'Вернуть в график'}
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => setReturnDialog(null)}>Отмена</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Итог переноса */}
       {moveResult && (
         <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setMoveResult(null) }}>
           <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="move-result-title">
-            <h3 id="move-result-title" className="form-panel-title">Задача перенесена</h3>
+            <h3 id="move-result-title" className="form-panel-title">{moveResult.heading ?? 'Задача перенесена'}</h3>
             <p style={{ margin: '0 0 12px' }}>{moveResult.title}.</p>
             {moveResult.pulled.length > 0 && (
               <div className="move-block">
@@ -1314,8 +1513,14 @@ export default function Schedule() {
                       <button type="button" className="btn btn-secondary" onClick={handleUnpin} disabled={saving}>Снять закрепление</button>
                     </div>
                   )}
+                  {(planSummary?.days ?? 0) > 1 && (
+                    <label className="check-line">
+                      <input type="checkbox" checked={deleteWhole} onChange={e => setDeleteWhole(e.target.checked)} />
+                      <span>Удалить позицию целиком — все дни ({planSummary!.days} дн., {planSummary!.qty} шт)</span>
+                    </label>
+                  )}
                   <button className="btn btn-danger" style={{ width: '100%' }} onClick={handleDelete} disabled={saving}>
-                    Удалить
+                    {deleteWhole && (planSummary?.days ?? 0) > 1 ? 'Снять позицию с графика' : 'Удалить'}
                   </button>
                 </div>
               ) : (

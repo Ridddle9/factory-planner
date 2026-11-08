@@ -999,6 +999,97 @@ input[type="checkbox"] {
   line-height: 1.6;
 }
 
+/* Галочка с пояснением («вся позиция» при удалении и переносе) */
+.check-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.check-line input[type="checkbox"] {
+  flex: none;
+  margin: 1px 0 0;
+}
+
+.check-line small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* «Не в графике» в «Графике» */
+.off-schedule {
+  padding: 0;
+  margin-bottom: 16px;
+}
+
+.off-schedule-head {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.off-schedule-head p {
+  margin: 6px 0 0;
+  max-width: 72ch;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.off-schedule-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warning-light);
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 600;
+  vertical-align: 2px;
+}
+
+.off-schedule table th:first-child,
+.off-schedule table td:first-child {
+  padding-left: 24px;
+}
+
+.off-schedule table th:last-child,
+.off-schedule table td:last-child {
+  padding-right: 24px;
+}
+
+.off-schedule .off-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.off-schedule .off-cell {
+  display: block;
+}
+
+.modal-card .check-line {
+  margin: 0 0 14px;
+}
+
+.off-schedule .off-reason {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.off-schedule .empty {
+  padding: 32px 24px;
+}
+
 /* Выбор из нескольких вариантов с пояснением (перенос: заполнять ли освободившееся место) */
 .choice-group {
   display: flex;
@@ -1634,6 +1725,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); outlin
 
   .list-page .list-card table.stack tr {
     padding: 10px 16px;
+  }
+
+  .off-schedule-head {
+    padding: 16px;
+  }
+
+  .off-schedule table.stack tr {
+    padding: 12px 16px;
+  }
+
+  .off-schedule .off-reason {
+    align-items: flex-end;
   }
 
   .list-page .list-tabs {

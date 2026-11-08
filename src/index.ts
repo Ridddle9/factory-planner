@@ -567,6 +567,63 @@ async function replanTeamFrom(teamId: string, from: Date, opts: { keepStarts?: b
   return itemIds;
 }
 
+// Поставить позицию в план бригады (вернуть из «Не в графике», перенести позицию целиком):
+// mode "date" — позиция встаёт с даты from первой (её задачи становятся ручными), "fifo" — в своё место
+// очереди (приоритет → Дата передачи). Автоматические задачи других позиций бригады с from пересобираются
+// и не встают раньше своего дня (только сдвигаются вправо); ручные задачи и факт не трогаются.
+// planQty — сколько штук позиции поставить (остальное её количество уже стоит в плане)
+async function placeItemOnTeam(
+  orderItemId: string, teamId: string, from: Date,
+  opts: { mode: "date" | "fifo"; planQty: number; stamp: { manualAt: Date; manualBy: string | null } },
+): Promise<string[]> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = from < today ? today : from;
+  const auto = await prisma.dailyTask.findMany({
+    where: { teamId, date: { gte: start }, actualQuantity: null, manuallyPlaced: false, plannedQuantity: { gt: 0 }, orderItemId: { not: orderItemId } },
+    select: { orderItemId: true, date: true },
+  });
+  const firstDay = new Map<string, number>();
+  for (const t of auto) firstDay.set(t.orderItemId, Math.min(firstDay.get(t.orderItemId) ?? Infinity, t.date.getTime()));
+  const otherIds = [...firstDay.keys()];
+  if (otherIds.length > 0) {
+    await prisma.dailyTask.deleteMany({
+      where: { teamId, date: { gte: start }, actualQuantity: null, manuallyPlaced: false, orderItemId: { in: otherIds } },
+    });
+  }
+  const items = await prisma.orderItem.findMany({
+    where: { id: { in: [orderItemId, ...otherIds] } },
+    select: { id: true, quantity: true, transferDate: true, order: { select: { priority: true, raytecDate: true, approvedAt: true } } },
+  });
+  items.sort((a, b) =>
+    (opts.mode === "date" ? Number(b.id === orderItemId) - Number(a.id === orderItemId) : 0) ||
+    a.order.priority - b.order.priority ||
+    queueDateMs(a) - queueDateMs(b) ||
+    (a.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (b.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
+  const placedIds: string[] = [];
+  for (const item of items) {
+    try {
+      if (item.id === orderItemId) {
+        const { tasks } = await autoPlanOrderItem(item.id, {
+          startDate: start, preferredTeamId: teamId, ignoreHold: true,
+          reservedQty: Math.max(0, item.quantity - opts.planQty),
+        });
+        placedIds.push(...tasks.map((t: { id: string }) => t.id));
+      } else {
+        const reservedQty = await plannedAheadQty(item.id, today);
+        if (reservedQty >= item.quantity) continue;
+        const startDate = new Date(Math.max(start.getTime(), firstDay.get(item.id) ?? start.getTime()));
+        await autoPlanOrderItem(item.id, { startDate, preferredTeamId: teamId, reservedQty });
+      }
+    } catch { /* нет бригады с нормой — позиция останется незапланированной */ }
+  }
+  // На конкретную дату — решение человека: задачи позиции закрепляются, автоматика их не сдвинет
+  if (opts.mode === "date" && placedIds.length > 0) {
+    await prisma.dailyTask.updateMany({ where: { id: { in: placedIds } }, data: { manuallyPlaced: true, ...opts.stamp } });
+  }
+  return placedIds;
+}
+
 // Срез плана бригад (по позициям: первый и последний день, штуки по дням) — чтобы после пересборки
 // сообщить, у кого сдвинулось окончание и кто встал на освободившийся день
 async function teamPlanSnapshot(teamIds: string[], from: Date) {
@@ -842,9 +899,18 @@ async function cascadeShiftLeft(teamId: string, startDate: Date, maxIterations =
 }
 
 // Helper: автопланирование позиции заказа
+// Сколько штук позиции снято с графика вручную и ещё не возвращено — не больше, чем реально не стоит
+// в плане (план без факта за любые дни): если позицию потом поставили руками или 1С уменьшила количество
+async function offPlanHold(item: { id: string; quantity: number; offPlanQty: number }): Promise<number> {
+  if (item.offPlanQty <= 0) return 0;
+  const agg = await prisma.dailyTask.aggregate({ where: { orderItemId: item.id, actualQuantity: null }, _sum: { plannedQuantity: true } });
+  return Math.max(0, Math.min(item.offPlanQty, item.quantity - (agg._sum.plannedQuantity ?? 0)));
+}
+
 async function autoPlanOrderItem(
   orderItemId: string,
-  options?: { startDate?: Date; preferredTeamId?: string; skipDates?: Date[]; reservedQty?: number }
+  // ignoreHold — явное «поставить в график» (вернуть из «Не в графике», автоплан заказа): снятое вручную тоже планируется
+  options?: { startDate?: Date; preferredTeamId?: string; skipDates?: Date[]; reservedQty?: number; ignoreHold?: boolean }
 ): Promise<{ tasks: any[]; overloaded: boolean }> {
   const orderItem = await prisma.orderItem.findUnique({
     where: { id: orderItemId },
@@ -926,7 +992,9 @@ async function autoPlanOrderItem(
   }
 
   const tasks: any[] = [];
-  let remaining = Math.max(0, quantity - (options?.reservedQty ?? 0));
+  // Снятое с графика вручную автоматика обратно не ставит (ручные правки неприкосновенны)
+  const hold = options?.ignoreHold ? 0 : await offPlanHold(orderItem);
+  let remaining = Math.max(0, quantity - (options?.reservedQty ?? 0) - hold);
   let overloaded = false;
 
   const maxDays = 365; // Защита от бесконечного цикла
@@ -1610,7 +1678,8 @@ app.post("/order-items/plan-unplanned", async (req: Request, res: Response) => {
     const futurePlanned = item.dailyTasks
       .filter((t) => t.date >= today && t.actualQuantity === null)
       .reduce((s, t) => s + t.plannedQuantity, 0);
-    return futurePlanned < K;
+    // Снятое с графика вручную сюда не возвращается — только из списка «Не в графике»
+    return futurePlanned + item.offPlanQty < K;
   });
 
   let planned = 0;
@@ -2390,6 +2459,121 @@ app.get("/order-items/:id/teams", async (req: Request, res: Response) => {
   res.json(ptcs.map(p => ({ teamId: p.team.id, teamName: p.team.name, perDay: Math.round(p.capacityPerDay * p.team.headcount * 10) / 10 })));
 });
 
+// Сколько у позиции стоит в графике (без факта): дни и штуки — для галочек «вся позиция» в «Графике»
+app.get("/order-items/:id/plan-summary", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const tasks = await prisma.dailyTask.findMany({
+    where: { orderItemId: String(req.params.id), orderItem: { order: { companyId: cid } }, actualQuantity: null, plannedQuantity: { gt: 0 } },
+    select: { plannedQuantity: true },
+  });
+  res.json({ days: tasks.length, qty: tasks.reduce((s, t) => s + t.plannedQuantity, 0) });
+});
+
+// «Не в графике»: позиции активных заказов, у которых часть количества не стоит в плане
+// (количество из 1С минус план без факта за любые дни). Причина: снято вручную / нет бригады с нормой / не запланировано
+app.get("/order-items/off-schedule", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const items = await prisma.orderItem.findMany({
+    where: { quantity: { gt: 0 }, order: { companyId: cid, active: true }, product: VISIBLE_PRODUCT },
+    select: {
+      id: true, quantity: true, transferDate: true, offPlanQty: true, offPlanAt: true, offPlanBy: true, offPlanTeamId: true,
+      order: { select: { orderNumber: true, customer: true, priority: true, raytecDate: true, approvedAt: true } },
+      product: { select: { id: true, code: true, name: true, categoryId: true, category: { select: { name: true } } } },
+    },
+  });
+  const planned = await prisma.dailyTask.groupBy({
+    by: ["orderItemId"],
+    where: { orderItemId: { in: items.map(i => i.id) }, actualQuantity: null },
+    _sum: { plannedQuantity: true },
+  });
+  const plannedMap = new Map(planned.map(p => [p.orderItemId, p._sum.plannedQuantity ?? 0]));
+  const off = items
+    .map(i => ({ i, planned: plannedMap.get(i.id) ?? 0 }))
+    .filter(x => x.i.quantity - x.planned > 0);
+
+  // Есть ли кому делать: бригады с нормой на товар, иначе — бригады категории
+  const withNorm = new Set((await prisma.productTeamCapacity.findMany({
+    where: { productId: { in: off.map(x => x.i.product.id) }, companyId: cid, capacityPerDay: { gt: 0 } },
+    select: { productId: true },
+  })).map(p => p.productId));
+  const catTeams = new Map<string, boolean>();
+  for (const x of off) {
+    const catId = x.i.product.categoryId;
+    if (!withNorm.has(x.i.product.id) && !catTeams.has(catId)) catTeams.set(catId, (await getAvailableTeamsForCategory(catId, cid)).length > 0);
+  }
+  const teamNames = new Map((await prisma.team.findMany({ where: { companyId: cid }, select: { id: true, name: true } })).map(t => [t.id, t.name]));
+
+  off.sort((a, b) =>
+    a.i.order.priority - b.i.order.priority ||
+    queueDateMs(a.i) - queueDateMs(b.i) ||
+    (a.i.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (b.i.order.approvedAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
+  res.json(off.map(({ i, planned }) => {
+    const gap = i.quantity - planned;
+    const manualQty = Math.min(i.offPlanQty, gap);
+    const hasTeam = withNorm.has(i.product.id) || !!catTeams.get(i.product.categoryId);
+    return {
+      orderItemId: i.id,
+      orderNumber: i.order.orderNumber,
+      customer: i.order.customer,
+      productCode: i.product.code,
+      productName: i.product.name,
+      categoryName: i.product.category.name,
+      transferDate: (i.transferDate ?? i.order.raytecDate)?.toISOString().slice(0, 10) ?? null,
+      quantity: i.quantity,
+      planned,
+      gap,
+      manualQty,
+      offPlanAt: manualQty > 0 ? i.offPlanAt : null,
+      offPlanBy: manualQty > 0 ? i.offPlanBy : null,
+      offPlanTeamId: i.offPlanTeamId,
+      offPlanTeamName: i.offPlanTeamId ? teamNames.get(i.offPlanTeamId) ?? null : null,
+      reason: manualQty > 0 ? "manual" : hasTeam ? "unplanned" : "noTeam",
+    };
+  }));
+});
+
+// Вернуть в график то, что не стоит в плане: mode "fifo" — в своё место очереди бригады,
+// "date" — с указанной даты (закреплённо); остальные задачи бригады только сдвигаются вправо
+app.post("/order-items/:id/return", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const id = String(req.params.id);
+  const { mode, date, teamId } = req.body as { mode?: string; date?: string; teamId?: string };
+  if (mode !== "fifo" && mode !== "date") return res.status(400).json({ error: "mode: fifo или date" });
+  if (!teamId || typeof teamId !== "string") return res.status(400).json({ error: "Выберите бригаду" });
+  const item = await prisma.orderItem.findFirst({ where: { id, order: { companyId: cid } }, select: { id: true, quantity: true } });
+  if (!item) return res.status(404).json({ error: "Позиция не найдена" });
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let from = today;
+  if (mode === "date") {
+    const d = date ? new Date(date) : null;
+    if (!d || isNaN(d.getTime())) return res.status(400).json({ error: "Укажите дату" });
+    from = d;
+  }
+  const agg = await prisma.dailyTask.aggregate({ where: { orderItemId: id, actualQuantity: null }, _sum: { plannedQuantity: true } });
+  const gap = item.quantity - (agg._sum.plannedQuantity ?? 0);
+  if (gap <= 0) return res.status(400).json({ error: "Позиция уже целиком в графике" });
+
+  const before = await teamPlanSnapshot([teamId], from);
+  const placed = await placeItemOnTeam(id, teamId, from, { mode, planQty: gap, stamp: manualStamp(req) });
+  await prisma.orderItem.update({ where: { id }, data: { offPlanQty: 0, offPlanAt: null, offPlanBy: null, offPlanTeamId: null } });
+  const after = await teamPlanSnapshot([teamId], from);
+  const cascade = { ...(await describeMove(before, after, from, id)), filled: true };
+  const tasks = placed.length
+    ? await prisma.dailyTask.findMany({ where: { id: { in: placed } }, select: { date: true, plannedQuantity: true, teamId: true }, orderBy: { date: "asc" } })
+    : [];
+  // Сколько встало: прирост плана позиции (задача в день, где позиция уже стояла, дописывается к ней)
+  const aggAfter = await prisma.dailyTask.aggregate({ where: { orderItemId: id, actualQuantity: null }, _sum: { plannedQuantity: true } });
+  res.json({
+    qty: (aggAfter._sum.plannedQuantity ?? 0) - (agg._sum.plannedQuantity ?? 0),
+    gap,
+    firstDate: tasks[0]?.date.toISOString().slice(0, 10) ?? null,
+    lastDate: tasks[tasks.length - 1]?.date.toISOString().slice(0, 10) ?? null,
+    teamId: tasks[0]?.teamId ?? null,
+    cascade,
+  });
+});
+
 app.get("/order-items/:id/remaining", async (req: Request, res: Response) => {
   const id = req.params.id as string | undefined;
   if (typeof id !== "string") {
@@ -2674,6 +2858,17 @@ app.post("/daily-tasks", async (req: Request, res: Response) => {
     if (teamId && typeof teamId === "string") {
       createData.team = { connect: { id: teamId } };
     }
+    // Поставили позицию в график руками — столько же снятого вручную уже не «висит»
+    if (createData.plannedQuantity > 0) {
+      const oi = await prisma.orderItem.findUnique({ where: { id: orderItemId }, select: { offPlanQty: true } });
+      if (oi && oi.offPlanQty > 0) {
+        const left = Math.max(0, oi.offPlanQty - createData.plannedQuantity);
+        await prisma.orderItem.update({
+          where: { id: orderItemId },
+          data: left > 0 ? { offPlanQty: left } : { offPlanQty: 0, offPlanAt: null, offPlanBy: null, offPlanTeamId: null },
+        });
+      }
+    }
     const task = await prisma.dailyTask.create({
       data: createData,
       include: {
@@ -2760,6 +2955,34 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
     if (manuallyPlaced === true && !changed) Object.assign(data, { manuallyPlaced: true, ...manualStamp(req) });
     if (manuallyPlaced === false) Object.assign(data, { manuallyPlaced: false, manualAt: null, manualBy: null });
 
+    // Перенос позиции целиком: все её задачи без факта (все дни, все бригады) встают с новой даты в новую
+    // бригаду одним куском (закреплённо, как обычный перенос), остальные задачи бригады сдвигаются вправо.
+    // Освободившееся место в старых днях — по fill, как при переносе одной задачи
+    if (req.body.wholeItem === true && (dateChanged || teamChanged)) {
+      const itemTasks = await prisma.dailyTask.findMany({
+        where: { orderItemId: current.orderItemId, actualQuantity: null, plannedQuantity: { gt: 0 } },
+        select: { id: true, date: true, teamId: true, plannedQuantity: true },
+      });
+      const qty = itemTasks.reduce((sum, t) => sum + t.plannedQuantity, 0);
+      const targetTeamId = data.teamId !== undefined ? data.teamId : current.teamId;
+      const targetDate = data.date ?? current.date;
+      if (!targetTeamId) return res.status(400).json({ error: "Для переноса позиции целиком нужна бригада" });
+      const srcTeams = [...new Set(itemTasks.map(t => t.teamId).filter((t): t is string => !!t))];
+      const srcFrom = itemTasks.reduce((m, t) => (t.date < m ? t.date : m), current.date);
+      const teamIds = [...new Set([...srcTeams, targetTeamId])];
+      const snapFrom = srcFrom < targetDate ? srcFrom : targetDate;
+      const before = await teamPlanSnapshot(teamIds, snapFrom);
+      await prisma.dailyTask.deleteMany({ where: { id: { in: itemTasks.map(t => t.id) } } });
+      const placed = await placeItemOnTeam(current.orderItemId, targetTeamId, targetDate, { mode: "date", planQty: qty, stamp: manualStamp(req) });
+      if (fill) for (const t of srcTeams) await replanTeamFrom(t, srcFrom);
+      const after = await teamPlanSnapshot(teamIds, snapFrom);
+      let cascade = { ...(await describeMove(before, after, current.date, current.orderItemId)), filled: fill };
+      const load = await calculateTeamLoad(targetTeamId, targetDate);
+      const cap = (await prisma.teamDayCapacity.findUnique({ where: { teamId_date: { teamId: targetTeamId, date: targetDate } } }))?.factor ?? 1;
+      if (load > cap + 0.005) cascade = { ...cascade, overload: { load: Math.round(load * 100), capacity: Math.round(cap * 100) } };
+      return res.json({ id: placed[0] ?? null, wholeItem: true, qty, days: itemTasks.length, autoAdjust: true, cascade });
+    }
+
     const include = {
       orderItem: { include: { order: true, product: { include: { category: true } } } },
       team: true,
@@ -2827,16 +3050,43 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
   }
 });
 
+// Снять задачу с графика. ?whole=1 — всю позицию: все её задачи без факта (дни с фактом — история, не трогаем).
+// Снятое запоминается у позиции (offPlanQty): автоматика его обратно не ставит, позиция видна в «Не в графике»
 app.delete("/daily-tasks/:id", async (req: Request, res: Response) => {
   const id = req.params.id;
   if (typeof id !== "string") return res.status(400).json({ error: "Invalid id" });
+  const whole = req.query.whole === "1";
 
   try {
     // Факт не удаляем никогда: у задачи с фактом убирается только план
-    const task = await prisma.dailyTask.findUniqueOrThrow({ where: { id }, select: { actualQuantity: true } });
-    if (task.actualQuantity !== null) await prisma.dailyTask.update({ where: { id }, data: { plannedQuantity: 0 } });
-    else await prisma.dailyTask.delete({ where: { id } });
-    res.status(204).send();
+    const task = await prisma.dailyTask.findUniqueOrThrow({
+      where: { id },
+      select: { id: true, orderItemId: true, date: true, teamId: true, plannedQuantity: true, actualQuantity: true, manuallyPlaced: true },
+    });
+    const targets = whole
+      ? await prisma.dailyTask.findMany({
+          where: { orderItemId: task.orderItemId, actualQuantity: null, plannedQuantity: { gt: 0 } },
+          select: { id: true, orderItemId: true, date: true, teamId: true, plannedQuantity: true, actualQuantity: true, manuallyPlaced: true },
+        })
+      : [task];
+    let removed = 0;
+    const deleted: { date: Date; teamId: string | null; plannedQuantity: number; manuallyPlaced: boolean }[] = [];
+    for (const t of targets) {
+      if (t.actualQuantity !== null) {
+        await prisma.dailyTask.update({ where: { id: t.id }, data: { plannedQuantity: 0 } });
+      } else {
+        await prisma.dailyTask.delete({ where: { id: t.id } });
+        removed += t.plannedQuantity;
+        deleted.push({ date: t.date, teamId: t.teamId, plannedQuantity: t.plannedQuantity, manuallyPlaced: t.manuallyPlaced });
+      }
+    }
+    if (removed > 0) {
+      await prisma.orderItem.update({
+        where: { id: task.orderItemId },
+        data: { offPlanQty: { increment: removed }, offPlanAt: new Date(), offPlanBy: req.user?.email ?? null, offPlanTeamId: task.teamId },
+      });
+    }
+    res.json({ removed, deleted });
   } catch (err) {
     res.status(404).json({ error: "Daily task not found" });
   }
@@ -3533,7 +3783,9 @@ app.post("/order-items/:id/auto-plan", async (req: Request, res: Response) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     options.reservedQty = await plannedAheadQty(id, today);
-    const result = await autoPlanOrderItem(id, options);
+    // «Автоплан» позиции — явное «поставить в график»: снятое вручную тоже планируется
+    const result = await autoPlanOrderItem(id, { ...options, ignoreHold: true });
+    await prisma.orderItem.update({ where: { id }, data: { offPlanQty: 0, offPlanAt: null, offPlanBy: null, offPlanTeamId: null } });
 
     res.json({
       orderItemId: id,
@@ -3592,7 +3844,8 @@ app.post("/orders/:id/auto-plan", async (req: Request, res: Response) => {
       results.push(await (async () => {
         const product = (item as { product: { code: string } }).product;
         try {
-          const result = await autoPlanOrderItem(item.id, { ...options, reservedQty: await plannedAheadQty(item.id, today) });
+          const result = await autoPlanOrderItem(item.id, { ...options, reservedQty: await plannedAheadQty(item.id, today), ignoreHold: true });
+          await prisma.orderItem.update({ where: { id: item.id }, data: { offPlanQty: 0, offPlanAt: null, offPlanBy: null, offPlanTeamId: null } });
           return {
             orderItemId: item.id,
             productCode: product.code,
