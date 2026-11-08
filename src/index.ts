@@ -3265,6 +3265,14 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       return res.json({ id: placed[0] ?? null, wholeItem: true, qty, days: itemTasks.length, autoAdjust: true, cascade, undoId });
     }
 
+    // «Отменить» переноса — через снимок плана: задача могла влиться в автоматическую задачу позиции и после
+    // пересборки бригады получить другой id. Задача с фактом — по-старому, обратным переносом (факт в снимок не входит)
+    const snapTarget = data.date ?? current.date;
+    const snapTeams = [...new Set([current.teamId, data.teamId !== undefined ? data.teamId : current.teamId].filter((t): t is string => !!t))];
+    const undoSnap = (dateChanged || teamChanged) && current.actualQuantity === null && snapTeams.length > 0
+      ? await captureSnapshot(snapTeams, current.date < snapTarget ? current.date : snapTarget, current.orderItemId)
+      : null;
+
     const include = {
       orderItem: { include: { order: true, product: { include: { category: true } } } },
       team: true,
@@ -3326,16 +3334,18 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
     }
 
     // Реестр переносов: «Отменить» (undoOf) не пишет новую строку, а помечает отменённой исходную
+    const undoId = undoSnap ? await saveSnapshot(req.user!.companyId, undoSnap) : undefined;
     let moveId: string | null = null;
     if (dateChanged || teamChanged) {
       if (typeof req.body.undoOf === "string") await markMoveUndone(req, { id: req.body.undoOf });
       else moveId = await logMove(req, {
         kind: "move", orderItemId: current.orderItemId, qty: data.plannedQuantity ?? current.plannedQuantity,
         from: [current.date], fromTeamIds: [current.teamId], to: [task.date], toTeamId: task.teamId, filled: fill,
+        ...(undoId ? { snapshotId: undoId } : {}),
       });
     }
 
-    res.json({ ...task, autoAdjust: dateChanged || teamChanged, cascade, moveId });
+    res.json({ ...task, autoAdjust: dateChanged || teamChanged, cascade, moveId, undoId });
   } catch (err: any) {
     if (err.code === "P2002") {
       res.status(409).json({ error: "Task for this order item and date already exists" });

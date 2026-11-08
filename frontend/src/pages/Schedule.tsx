@@ -529,8 +529,9 @@ export default function Schedule() {
       const taskId = popup.cell.taskId
       // Без изменений — не сохраняем, иначе задача зря станет ручной
       if (editQty !== prevQty || (editTeamId || null) !== prevTeamId) {
-        const { data: upd } = await api.put<{ moveId?: string | null }>(`/daily-tasks/${taskId}`, { plannedQuantity: editQty, teamId: editTeamId || null })
-        setUndoAction({
+        const { data: upd } = await api.put<{ moveId?: string | null; undoId?: string }>(`/daily-tasks/${taskId}`, { plannedQuantity: editQty, teamId: editTeamId || null })
+        // Сменили бригаду — отмена снимком плана (бригады пересобирались); только количество — обратной правкой
+        setUndoAction(upd?.undoId ? snapshotUndo(`Вернуть ${prevQty} шт.`, upd.undoId) : {
           label: `Вернуть ${prevQty} шт.`,
           fn: async () => { await api.put(`/daily-tasks/${taskId}`, { plannedQuantity: prevQty, teamId: prevTeamId, manuallyPlaced: prevManual, undoOf: upd?.moveId ?? undefined }) },
         })
@@ -681,6 +682,8 @@ export default function Schedule() {
     showCascade(`${row?.orderNumber ?? ''} · ${whole ? `вся позиция, ${d.wholeQty} шт,` : `${d.qty} шт`} перенесены ${where}`, data?.cascade, d.fromDate, d.date)
     // Позицию целиком возвращает снимок плана (её дни могли быть в разных бригадах)
     if (whole) { setUndoAction(snapshotUndo(`перенос ${row?.orderNumber ?? 'позиции'}`, data?.undoId)); loadPlan(); return }
+    if (data?.undoId) { setUndoAction(snapshotUndo(`Вернуть на ${formatDateShort(d.fromDate)}`, data.undoId)); loadPlan(); return }
+    // Задача с фактом: снимка нет — обратный перенос
     const movedId = data?.id ?? d.taskId
     setUndoAction({
       label: `Вернуть на ${formatDateShort(d.fromDate)}`,
