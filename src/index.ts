@@ -506,6 +506,20 @@ function manualStamp(req: Request) {
   return { manualAt: new Date(), manualBy: req.user?.email ?? null };
 }
 
+// Перенос «не заполняя освободившееся место»: в ячейке позиции на старый день показываем «оставлено пустым»
+// (только если в этот день у позиции не осталось задачи — например, с фактом)
+async function markEmptySlots(orderItemId: string, slots: { date: Date; teamId: string | null }[], by: string | null) {
+  for (const slot of slots) {
+    const left = await prisma.dailyTask.findUnique({ where: { orderItemId_date: { orderItemId, date: slot.date } }, select: { id: true } });
+    if (left) continue;
+    await prisma.emptySlot.upsert({
+      where: { orderItemId_date: { orderItemId, date: slot.date } },
+      update: { teamId: slot.teamId, createdAt: new Date(), createdBy: by },
+      create: { orderItemId, date: slot.date, teamId: slot.teamId, createdBy: by },
+    });
+  }
+}
+
 // Ручные задачи позиции с даты from: их не трогает никакое автопланирование.
 // Остаток позиции планируется вокруг них (reservedQty / skipDates) и на ту же бригаду.
 async function manualPlanOf(orderItemId: string, from: Date) {
@@ -2459,6 +2473,45 @@ app.get("/order-items/:id/teams", async (req: Request, res: Response) => {
   res.json(ptcs.map(p => ({ teamId: p.team.id, teamName: p.team.name, perDay: Math.round(p.capacityPerDay * p.team.headcount * 10) / 10 })));
 });
 
+// Ячейки «оставлено пустым» за период. stillFree — у бригады в этот день ещё есть свободное место
+// (если место потом заняли, например «Перепланировать очередь», надпись не показывается)
+app.get("/daily-tasks/empty-slots", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const { dateFrom, dateTo } = req.query as { dateFrom?: string; dateTo?: string };
+  const date: { gte?: Date; lte?: Date } = {};
+  if (dateFrom) date.gte = new Date(dateFrom);
+  if (dateTo) date.lte = new Date(dateTo);
+  const slots = await prisma.emptySlot.findMany({
+    where: { orderItem: { order: { companyId: cid }, product: VISIBLE_PRODUCT }, ...(Object.keys(date).length ? { date } : {}) },
+    select: {
+      orderItemId: true, teamId: true, date: true, createdAt: true, createdBy: true,
+      // Данные позиции — чтобы показать строку, даже если в периоде у неё не осталось задач
+      orderItem: { select: { quantity: true, order: { select: { id: true, orderNumber: true } }, product: { select: { code: true, name: true, category: { select: { workshop: { select: { name: true } } } } } } } },
+    },
+  });
+  const teamNames = new Map((await prisma.team.findMany({ where: { companyId: cid }, select: { id: true, name: true } })).map(t => [t.id, t.name]));
+  const out = [];
+  for (const s of slots) {
+    const has = await prisma.dailyTask.findUnique({ where: { orderItemId_date: { orderItemId: s.orderItemId, date: s.date } }, select: { plannedQuantity: true } });
+    if (has && has.plannedQuantity > 0) continue;
+    let stillFree = true;
+    if (s.teamId) {
+      const load = await calculateTeamLoad(s.teamId, s.date);
+      const cap = (await prisma.teamDayCapacity.findUnique({ where: { teamId_date: { teamId: s.teamId, date: s.date } } }))?.factor ?? 1;
+      stillFree = load < cap - 0.01;
+    }
+    const oi = s.orderItem;
+    out.push({
+      orderItemId: s.orderItemId, date: s.date.toISOString().slice(0, 10), teamId: s.teamId,
+      teamName: s.teamId ? teamNames.get(s.teamId) ?? null : null,
+      createdAt: s.createdAt, createdBy: s.createdBy, stillFree,
+      orderNumber: oi.order.orderNumber, orderId: oi.order.id, quantity: oi.quantity,
+      productCode: oi.product.code, productName: oi.product.name, workshopName: oi.product.category.workshop?.name ?? "—",
+    });
+  }
+  res.json(out);
+});
+
 // Сколько у позиции стоит в графике (без факта): дни и штуки — для галочек «вся позиция» в «Графике»
 app.get("/order-items/:id/plan-summary", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
@@ -2869,6 +2922,7 @@ app.post("/daily-tasks", async (req: Request, res: Response) => {
         });
       }
     }
+    await prisma.emptySlot.deleteMany({ where: { orderItemId, date: taskDate } });
     const task = await prisma.dailyTask.create({
       data: createData,
       include: {
@@ -2975,6 +3029,7 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       await prisma.dailyTask.deleteMany({ where: { id: { in: itemTasks.map(t => t.id) } } });
       const placed = await placeItemOnTeam(current.orderItemId, targetTeamId, targetDate, { mode: "date", planQty: qty, stamp: manualStamp(req) });
       if (fill) for (const t of srcTeams) await replanTeamFrom(t, srcFrom);
+      else await markEmptySlots(current.orderItemId, itemTasks.map(t => ({ date: t.date, teamId: t.teamId })), req.user?.email ?? null);
       const after = await teamPlanSnapshot(teamIds, snapFrom);
       let cascade = { ...(await describeMove(before, after, current.date, current.orderItemId)), filled: fill };
       const load = await calculateTeamLoad(targetTeamId, targetDate);
@@ -3030,6 +3085,9 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       const teamIds = [...new Set([...plans.map(p => p.teamId), ...(current.teamId ? [current.teamId] : [])])];
       const before = await teamPlanSnapshot(teamIds, from);
       for (const p of plans) await replanTeamFrom(p.teamId, p.from, { keepStarts: !fill });
+      if (!fill && dateChanged) await markEmptySlots(current.orderItemId, [{ date: current.date, teamId: current.teamId }], req.user?.email ?? null);
+      // Позиция снова встала в этот день — пометка «оставлено пустым» здесь больше не нужна
+      await prisma.emptySlot.deleteMany({ where: { orderItemId: current.orderItemId, date: task.date } });
       const after = await teamPlanSnapshot(teamIds, from);
       cascade = { ...(await describeMove(before, after, current.date, current.orderItemId)), mergedIntoOwn, filled: fill };
       // День всё ещё перегружен — значит, там только ручные задачи (их пересборка не двигает): сообщаем

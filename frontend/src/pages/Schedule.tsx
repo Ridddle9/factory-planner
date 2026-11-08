@@ -171,6 +171,12 @@ export default function Schedule() {
     reason: 'manual' | 'unplanned' | 'noTeam'
   }
   const [offItems, setOffItems] = useState<OffItem[]>([])
+  // Ячейки «оставлено пустым» (перенос без заполнения): показываем, пока у бригады там свободно
+  type EmptySlot = {
+    orderItemId: string; date: string; teamId: string | null; teamName: string | null; createdAt: string; createdBy: string | null; stillFree: boolean
+    orderNumber: string; orderId: string; quantity: number; productCode: string; productName: string; workshopName: string
+  }
+  const [emptySlots, setEmptySlots] = useState<EmptySlot[]>([])
   const [showOff, setShowOff] = useState(false)
   type ReturnDialog = { item: OffItem; mode: 'fifo' | 'date'; date: string; teamId: string }
   const [returnDialog, setReturnDialog] = useState<ReturnDialog | null>(null)
@@ -318,9 +324,13 @@ export default function Schedule() {
     if (workshopId) params.set('workshopId', workshopId)
     if (teamId) params.set('teamId', teamId)
     if (orderId) params.set('orderId', orderId)
-    const { data, error: e } = await api.get<DailyTask[]>(`/daily-tasks/plan?${params}`)
+    const [{ data, error: e }, { data: slots }] = await Promise.all([
+      api.get<DailyTask[]>(`/daily-tasks/plan?${params}`),
+      api.get<EmptySlot[]>(`/daily-tasks/empty-slots?dateFrom=${dateFrom}&dateTo=${dateTo}`),
+    ])
     setLoading(false)
     if (e) { setError(e); return }
+    setEmptySlots((slots ?? []).filter(sl => sl.stillFree))
     setTasks(data ?? [])
     setError(null)
   }, [dateFrom, dateTo, workshopId, teamId, orderId])
@@ -391,15 +401,28 @@ export default function Schedule() {
         manualBy: task.manualBy ?? null,
       }
     }
+    // Позиция, у которой в периоде осталась только пометка «оставлено пустым», — тоже строкой
+    for (const sl of emptySlots) {
+      if (map.has(sl.orderItemId)) continue
+      if ((workshopId || teamId || orderId) && !(teamId && sl.teamId === teamId) && !(orderId && sl.orderId === orderId)) continue
+      map.set(sl.orderItemId, {
+        orderItemId: sl.orderItemId, workshopName: sl.workshopName, teamName: sl.teamName ?? '—',
+        productCode: sl.productCode, productName: sl.productName, orderNumber: sl.orderNumber, orderId: sl.orderId,
+        quantity: sl.quantity, cells: {},
+      })
+    }
+    const slotItems = new Set(emptySlots.map(sl => sl.orderItemId))
     return Array.from(map.values())
-      .filter(row => Object.values(row.cells).some(c => c.plannedQuantity > 0))
+      .filter(row => Object.values(row.cells).some(c => c.plannedQuantity > 0) || slotItems.has(row.orderItemId))
       .sort((a, b) => {
         if (a.workshopName !== b.workshopName) return a.workshopName.localeCompare(b.workshopName, 'ru')
         if (a.teamName !== b.teamName) return a.teamName.localeCompare(b.teamName, 'ru')
         if (a.orderNumber !== b.orderNumber) return a.orderNumber.localeCompare(b.orderNumber, 'ru', { numeric: true })
         return a.productCode.localeCompare(b.productCode, 'ru')
       })
-  }, [tasks])
+  }, [tasks, emptySlots, workshopId, teamId, orderId])
+
+  const emptySlotMap = useMemo(() => new Map(emptySlots.map(sl => [`${sl.orderItemId}|${sl.date}`, sl])), [emptySlots])
 
   // При первом открытии на телефоне — ближайший день с задачами (например, если сегодня выходной)
   const autoPickedDay = useRef(false)
@@ -1159,6 +1182,7 @@ export default function Schedule() {
                         {dates.map(d => {
                           const cell = row.cells[d]
                           const bg = cellBg(cell, d)
+                          const emptySlot = (!cell || (cell.plannedQuantity === 0 && cell.actualQuantity === null)) ? emptySlotMap.get(`${row.orderItemId}|${d}`) : undefined
                           return (
                             <td
                               key={d}
@@ -1172,9 +1196,12 @@ export default function Schedule() {
                                 cursor: 'pointer',
                               }}
                               {...(cell
-                                ? tipProps(`${row.productName || row.productCode}\nПлан: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, факт: ${cell.actualQuantity}` : ''}${cell.manual ? `\n📌 Ручная правка — перепланирование не трогает\n${manualInfo(cell)}` : ''}${cell.comment ? `\n${cell.comment}` : ''}`)
-                                : {})}
+                                ? tipProps(`${row.productName || row.productCode}\nПлан: ${cell.plannedQuantity}${cell.actualQuantity !== null ? `, факт: ${cell.actualQuantity}` : ''}${cell.manual ? `\nРучная правка — перепланирование не трогает\n${manualInfo(cell)}` : ''}${cell.comment ? `\n${cell.comment}` : ''}`)
+                                : emptySlot
+                                  ? tipProps(`Оставлено пустым при переносе позиции${emptySlot.teamName ? `\n${emptySlot.teamName}` : ''}\n${[emptySlot.createdBy, new Date(emptySlot.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' · ')}`)
+                                  : {})}
                             >
+                              {emptySlot && <div className="empty-slot">оставлено пустым</div>}
                               {cell && cell.plannedQuantity > 0 && (
                                 <>
                                   <div style={{ fontWeight: 600, lineHeight: 1.4 }}>{cell.manual && <PushPin className="pin-mark" size={12} weight="fill" aria-label="Ручная правка" />}{cell.plannedQuantity}</div>

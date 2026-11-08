@@ -1154,6 +1154,15 @@ input[type="checkbox"] {
   color: var(--text-secondary);
 }
 
+/* Ячейка «оставлено пустым» (перенос без заполнения освободившегося места) */
+.empty-slot {
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--text-muted);
+  font-style: italic;
+  white-space: normal;
+}
+
 /* ─── Ручные правки в графике ────────────────────────────────── */
 .pin-mark {
   margin-right: 3px;
