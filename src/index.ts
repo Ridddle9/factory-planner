@@ -366,31 +366,38 @@ async function getAvailableTeamsForCategory(categoryId: string, companyId: strin
 }
 
 
-// ─── Скрытые категории ───────────────────────────────────────────────────────
-// Скрытие — только отображение: синк по-прежнему сохраняет заказы и товары скрытых категорий,
-// планировщик их планирует, загрузка бригад их учитывает. Интерфейс их не показывает.
-const VISIBLE_PRODUCT = { category: { visible: true } } as const;
+// ─── Скрытые категории и участки ─────────────────────────────────────────────
+// Скрытие — только отображение: синк по-прежнему сохраняет заказы и товары скрытых категорий и участков
+// (участок из 1С остаётся скрытым), планировщик их планирует, загрузка бригад их учитывает.
+// Интерфейс их не показывает. Категория видна, только если видна она сама и её участок
+const VISIBLE_PRODUCT = { category: { visible: true, workshop: { visible: true } } } as const;
+// Поля категории для проверки видимости в выборках (select) и сама проверка
+const CAT_VISIBILITY = { visible: true, workshop: { select: { visible: true } } } as const;
+const catVisible = (c: { visible: boolean; workshop: { visible: boolean } }) => c.visible && c.workshop.visible;
 
-// Бригады, вся работа которых — скрытые категории (нормы, связи с категориями, задачи плана).
+// Бригады, вся работа которых — скрытые категории или участки (нормы, связи с категориями, задачи плана).
 // Бригады без какой-либо работы не считаются скрытыми.
 async function hiddenTeamIds(companyId: string): Promise<Set<string>> {
-  const hiddenCats = await prisma.productCategory.count({ where: { companyId, visible: false } });
-  if (hiddenCats === 0) return new Set();
+  const [hiddenCats, hiddenWorkshops] = await Promise.all([
+    prisma.productCategory.count({ where: { companyId, visible: false } }),
+    prisma.workshop.count({ where: { companyId, visible: false } }),
+  ]);
+  if (hiddenCats === 0 && hiddenWorkshops === 0) return new Set();
   const teams = await prisma.team.findMany({
     where: { companyId },
     select: {
       id: true,
-      productCapacities: { where: { capacityPerDay: { gt: 0 } }, select: { product: { select: { category: { select: { visible: true } } } } } },
-      categories: { select: { category: { select: { visible: true } } } },
-      dailyTasks: { where: { plannedQuantity: { gt: 0 } }, select: { orderItem: { select: { product: { select: { category: { select: { visible: true } } } } } } } },
+      productCapacities: { where: { capacityPerDay: { gt: 0 } }, select: { product: { select: { category: { select: CAT_VISIBILITY } } } } },
+      categories: { select: { category: { select: CAT_VISIBILITY } } },
+      dailyTasks: { where: { plannedQuantity: { gt: 0 } }, select: { orderItem: { select: { product: { select: { category: { select: CAT_VISIBILITY } } } } } } },
     },
   });
   const hidden = new Set<string>();
   for (const t of teams) {
     const flags = [
-      ...t.productCapacities.map(c => c.product.category.visible),
-      ...t.categories.map(c => c.category.visible),
-      ...t.dailyTasks.map(d => d.orderItem.product.category.visible),
+      ...t.productCapacities.map(c => catVisible(c.product.category)),
+      ...t.categories.map(c => catVisible(c.category)),
+      ...t.dailyTasks.map(d => catVisible(d.orderItem.product.category)),
     ];
     if (flags.length > 0 && flags.every(v => !v)) hidden.add(t.id);
   }
@@ -1709,7 +1716,6 @@ app.post("/order-items/plan-unplanned", async (req: Request, res: Response) => {
     where: {
       quantity: { gt: 0 },
       order: { companyId: cid, active: true },
-      product: { category: { workshop: { visible: true } } },
     },
     include: { dailyTasks: true, order: { select: { approvedAt: true, priority: true, raytecDate: true } } },
   });
@@ -1757,8 +1763,11 @@ app.post("/order-items/plan-unplanned", async (req: Request, res: Response) => {
 
 app.get("/workshops", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
+  // ?hidden=1 — раздел «Скрытые» (восстановление)
+  const hidden = req.query.hidden === "1";
   const workshops = await prisma.workshop.findMany({
-    where: { companyId: cid, visible: true },
+    where: { companyId: cid, visible: !hidden },
+    include: { _count: { select: { categories: true } } },
     orderBy: { name: "asc" },
   });
   res.json(workshops);
@@ -1782,16 +1791,23 @@ app.post("/workshops", async (req: Request, res: Response) => {
 app.put("/workshops/:id", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const id = req.params.id as string;
-  const { name } = req.body;
+  const { name, visible } = req.body;
 
-  if (!name || typeof name !== "string") {
+  // Скрыть / восстановить участок — отдельно от переименования
+  if (name === undefined && typeof visible !== "boolean") {
+    return res.status(400).json({ error: "name is required" });
+  }
+  if (name !== undefined && (!name || typeof name !== "string")) {
     return res.status(400).json({ error: "name is required" });
   }
 
   try {
     const existing = await prisma.workshop.findFirst({ where: { id, companyId: cid } });
     if (!existing) { res.status(404).json({ error: "Workshop not found" }); return; }
-    const workshop = await prisma.workshop.update({ where: { id }, data: { name } });
+    const workshop = await prisma.workshop.update({
+      where: { id },
+      data: { ...(name !== undefined ? { name } : {}), ...(typeof visible === "boolean" ? { visible } : {}) },
+    });
     res.json(workshop);
   } catch (err) {
     res.status(404).json({ error: "Workshop not found" });
@@ -1803,8 +1819,15 @@ app.delete("/workshops/:id", async (req: Request, res: Response) => {
   const id = req.params.id as string;
 
   try {
-    const existing = await prisma.workshop.findFirst({ where: { id, companyId: cid } });
+    const existing = await prisma.workshop.findFirst({ where: { id, companyId: cid }, include: { _count: { select: { categories: true } } } });
     if (!existing) { res.status(404).json({ error: "Workshop not found" }); return; }
+    // Удаление участка удалило бы его категории (каскадом) — не даём, объясняем
+    if (existing._count.categories > 0) {
+      const n = existing._count.categories;
+      const word = n % 10 === 1 && n % 100 !== 11 ? "категория" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "категории" : "категорий";
+      res.status(409).json({ error: `Нельзя удалить участок «${existing.name}»: в нём ${n} ${word}. Сначала перенесите или удалите все категории участка или скройте его.` });
+      return;
+    }
     await prisma.workshop.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {
@@ -2244,12 +2267,12 @@ app.get("/orders", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const orders = await prisma.order.findMany({
     where: { companyId: cid, active: true },
-    include: { items: { include: { product: { include: { category: { select: { visible: true } } } } } } },
+    include: { items: { include: { product: { include: { category: { select: CAT_VISIBILITY } } } } } },
     orderBy: { orderNumber: "asc" },
   });
   // Позиции скрытых категорий не показываем; заказ только из них — тоже
   res.json(orders
-    .map(o => ({ ...o, visibleItems: o.items.filter(i => i.product.category.visible) }))
+    .map(o => ({ ...o, visibleItems: o.items.filter(i => catVisible(i.product.category)) }))
     .filter(o => o.items.length === 0 || o.visibleItems.length > 0)
     .map(({ visibleItems, ...o }) => ({ ...o, items: visibleItems })));
 });
@@ -2860,10 +2883,10 @@ app.get("/daily-tasks/plan", async (req: Request, res: Response) => {
     };
   }
 
-  // Скрытые категории в графике не показываем
+  // Скрытые категории и участки в графике не показываем
   where.orderItem = {
     ...where.orderItem,
-    product: { ...where.orderItem?.product, category: { ...where.orderItem?.product?.category, visible: true } },
+    product: { ...where.orderItem?.product, category: { ...where.orderItem?.product?.category, visible: true, workshop: { visible: true } } },
   };
 
   const tasks = await prisma.dailyTask.findMany({
@@ -4087,7 +4110,7 @@ async function teamTasksWithLoad(companyId: string, from: Date, to: Date, teamId
         select: {
           id: true,
           order: { select: { orderNumber: true, customer: true } },
-          product: { select: { id: true, code: true, name: true, capacityPerDay: true, category: { select: { capacityPerTeamPerDay: true, visible: true } } } },
+          product: { select: { id: true, code: true, name: true, capacityPerDay: true, category: { select: { capacityPerTeamPerDay: true, ...CAT_VISIBILITY } } } },
         },
       },
     },
@@ -4192,9 +4215,9 @@ app.get("/planning/team-load", async (req: Request, res: Response) => {
   const rows = new Map<string, { orderItemId: string; orderNumber: string; customer: string; productCode: string; productName: string; capPerDay: number; cells: Record<string, { planned: number; actual: number | null; share: number; manual: boolean }> }>();
   for (const t of tasks) {
     if (t.plannedQuantity <= 0 && !t.actualQuantity) continue;
-    // Скрытые категории — одной строкой, чтобы загрузка дня сходилась с позициями
-    if (!t.orderItem.product.category.visible) {
-      const h = rows.get("hidden") ?? { orderItemId: "hidden", orderNumber: "Скрытые категории", customer: "", productCode: "", productName: "позиции скрытых категорий", capPerDay: 0, cells: {} };
+    // Скрытые категории и участки — одной строкой, чтобы загрузка дня сходилась с позициями
+    if (!catVisible(t.orderItem.product.category)) {
+      const h = rows.get("hidden") ?? { orderItemId: "hidden", orderNumber: "Скрытые категории", customer: "", productCode: "", productName: "позиции скрытых категорий и участков", capPerDay: 0, cells: {} };
       const c = h.cells[t.date] ?? { planned: 0, actual: null, share: 0, manual: false };
       c.planned += t.plannedQuantity;
       c.share = Math.round((c.share + t.share) * 1000) / 1000;

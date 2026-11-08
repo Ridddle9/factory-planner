@@ -213,9 +213,11 @@ function matchTeams<T extends { name: string }>(teams: T[], query: string): T[] 
 
 // ─── Реализация функций ──────────────────────────────────────────────────────
 
-// Скрытые категории помощник не показывает (как и интерфейс): ни позиции, ни бригады,
+// Скрытые категории и участки помощник не показывает (как и интерфейс): ни позиции, ни бригады,
 // занятые только ими. В загрузке бригад скрытая работа учитывается — она занимает бригаду.
-const VISIBLE = { category: { visible: true } } as const;
+const VISIBLE = { category: { visible: true, workshop: { visible: true } } } as const;
+const CAT_VISIBILITY = { visible: true, workshop: { select: { visible: true } } } as const;
+const catVisible = (c: { visible: boolean; workshop: { visible: boolean } }) => c.visible && c.workshop.visible;
 
 function makeTools(prisma: PrismaClient, cid: string) {
   async function visibleTeams() {
@@ -223,17 +225,17 @@ function makeTools(prisma: PrismaClient, cid: string) {
       where: { companyId: cid },
       select: {
         id: true, name: true,
-        productCapacities: { where: { capacityPerDay: { gt: 0 } }, select: { product: { select: { category: { select: { visible: true } } } } } },
-        categories: { select: { category: { select: { visible: true } } } },
-        dailyTasks: { where: { plannedQuantity: { gt: 0 } }, select: { orderItem: { select: { product: { select: { category: { select: { visible: true } } } } } } } },
+        productCapacities: { where: { capacityPerDay: { gt: 0 } }, select: { product: { select: { category: { select: CAT_VISIBILITY } } } } },
+        categories: { select: { category: { select: CAT_VISIBILITY } } },
+        dailyTasks: { where: { plannedQuantity: { gt: 0 } }, select: { orderItem: { select: { product: { select: { category: { select: CAT_VISIBILITY } } } } } } },
       },
     });
     return teams
       .filter(t => {
         const flags = [
-          ...t.productCapacities.map(c => c.product.category.visible),
-          ...t.categories.map(c => c.category.visible),
-          ...t.dailyTasks.map(d => d.orderItem.product.category.visible),
+          ...t.productCapacities.map(c => catVisible(c.product.category)),
+          ...t.categories.map(c => catVisible(c.category)),
+          ...t.dailyTasks.map(d => catVisible(d.orderItem.product.category)),
         ];
         return flags.length === 0 || flags.some(Boolean);
       })

@@ -1,6 +1,8 @@
 export interface Workshop {
   id: string
   name: string
+  visible?: boolean
+  _count?: { categories: number }
 }
 
 export interface ProductCategory {
