@@ -239,3 +239,18 @@ model EmptySlot {
 
   @@unique([orderItemId, date])
 }
+
+// Снимок плана для «Отменить» после «Вернуть в график» и переноса позиции целиком: задачи без факта
+// затронутых бригад с даты from и самой позиции + её отметки. fingerprint — состояние сразу после действия:
+// если план с тех пор менялся, отмена не применяется (чтобы не затереть чужие правки)
+model PlanSnapshot {
+  id          String   @id @default(cuid())
+  companyId   String
+  createdAt   DateTime @default(now())
+  teamIds     String   // JSON: string[]
+  fromDate    DateTime
+  orderItemId String
+  tasks       String   // JSON: задачи до действия
+  item        String   // JSON: offPlan* и пометки «оставлено пустым» позиции до действия
+  fingerprint String
+}

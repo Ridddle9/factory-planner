@@ -8,7 +8,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
 import path from "path";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { registerAssistant } from "./assistant";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -636,6 +636,45 @@ async function placeItemOnTeam(
     await prisma.dailyTask.updateMany({ where: { id: { in: placedIds } }, data: { manuallyPlaced: true, ...opts.stamp } });
   }
   return placedIds;
+}
+
+// --- Снимки плана для «Отменить» ---
+// Область действия: задачи без факта затронутых бригад с from и все задачи без факта самой позиции
+function snapshotScope(teamIds: string[], from: Date, orderItemId: string) {
+  return { actualQuantity: null, OR: [{ teamId: { in: teamIds }, date: { gte: from } }, { orderItemId }] };
+}
+const SNAP_TASK_SELECT = {
+  id: true, orderItemId: true, teamId: true, date: true, plannedQuantity: true, loadShare: true,
+  comment: true, manuallyPlaced: true, manualAt: true, manualBy: true,
+} as const;
+
+async function scopeFingerprint(teamIds: string[], from: Date, orderItemId: string): Promise<string> {
+  const tasks = await prisma.dailyTask.findMany({ where: snapshotScope(teamIds, from, orderItemId), select: SNAP_TASK_SELECT, orderBy: { id: "asc" } });
+  const line = tasks.map(t => [t.id, t.orderItemId, t.teamId, t.date.getTime(), t.plannedQuantity, t.manuallyPlaced].join("|")).join("\n");
+  return createHash("sha1").update(line).digest("hex");
+}
+
+// До действия: запомнить область; после действия — saveSnapshot с отпечатком нового состояния
+async function captureSnapshot(teamIds: string[], from: Date, orderItemId: string) {
+  const [tasks, item, slots] = await Promise.all([
+    prisma.dailyTask.findMany({ where: snapshotScope(teamIds, from, orderItemId), select: SNAP_TASK_SELECT }),
+    prisma.orderItem.findUnique({ where: { id: orderItemId }, select: { offPlanQty: true, offPlanAt: true, offPlanBy: true, offPlanTeamId: true } }),
+    prisma.emptySlot.findMany({ where: { orderItemId }, select: { teamId: true, date: true, createdAt: true, createdBy: true } }),
+  ]);
+  return { teamIds, from, orderItemId, tasks, item: { ...item, emptySlots: slots } };
+}
+
+async function saveSnapshot(companyId: string, snap: Awaited<ReturnType<typeof captureSnapshot>>): Promise<string> {
+  const fingerprint = await scopeFingerprint(snap.teamIds, snap.from, snap.orderItemId);
+  const row = await prisma.planSnapshot.create({
+    data: {
+      companyId, teamIds: JSON.stringify(snap.teamIds), fromDate: snap.from, orderItemId: snap.orderItemId,
+      tasks: JSON.stringify(snap.tasks), item: JSON.stringify(snap.item), fingerprint,
+    },
+  });
+  // Старые снимки (больше суток) не нужны — «Отменить» живёт до следующего действия
+  await prisma.planSnapshot.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - 24 * 3600 * 1000) } } });
+  return row.id;
 }
 
 // Срез плана бригад (по позициям: первый и последний день, штуки по дням) — чтобы после пересборки
@@ -2463,14 +2502,21 @@ app.get("/order-items/:id/teams", async (req: Request, res: Response) => {
   const cid = req.user!.companyId;
   const item = await prisma.orderItem.findFirst({
     where: { id: String(req.params.id), order: { companyId: cid } },
-    select: { productId: true },
+    select: { productId: true, product: { select: { categoryId: true, capacityPerDay: true, category: { select: { capacityPerTeamPerDay: true } } } } },
   });
   if (!item) return res.status(404).json({ error: "Order item not found" });
   const ptcs = await prisma.productTeamCapacity.findMany({
     where: { productId: item.productId, companyId: cid, capacityPerDay: { gt: 0 } },
     select: { capacityPerDay: true, team: { select: { id: true, name: true, headcount: true } } },
   });
-  res.json(ptcs.map(p => ({ teamId: p.team.id, teamName: p.team.name, perDay: Math.round(p.capacityPerDay * p.team.headcount * 10) / 10 })));
+  if (ptcs.length > 0) {
+    return res.json(ptcs.map(p => ({ teamId: p.team.id, teamName: p.team.name, perDay: Math.round(p.capacityPerDay * p.team.headcount * 10) / 10 })));
+  }
+  // Норм по бригадам нет — бригады категории с её запасной мощностью (так же выбирает планировщик)
+  const perPerson = item.product.capacityPerDay ?? item.product.category.capacityPerTeamPerDay;
+  const catTeamIds = perPerson > 0 ? await getAvailableTeamsForCategory(item.product.categoryId, cid) : [];
+  const catTeams = await prisma.team.findMany({ where: { id: { in: catTeamIds } }, select: { id: true, name: true, headcount: true }, orderBy: { name: "asc" } });
+  res.json(catTeams.map(t => ({ teamId: t.id, teamName: t.name, perDay: Math.round(perPerson * t.headcount * 10) / 10 })));
 });
 
 // Ячейки «оставлено пустым» за период. stillFree — у бригады в этот день ещё есть свободное место
@@ -2606,10 +2652,23 @@ app.post("/order-items/:id/return", async (req: Request, res: Response) => {
   const agg = await prisma.dailyTask.aggregate({ where: { orderItemId: id, actualQuantity: null }, _sum: { plannedQuantity: true } });
   const gap = item.quantity - (agg._sum.plannedQuantity ?? 0);
   if (gap <= 0) return res.status(400).json({ error: "Позиция уже целиком в графике" });
+  // Бригада должна делать этот товар (норма на товар, а без норм — бригада категории), иначе ничего не трогаем
+  const full = await prisma.orderItem.findUnique({ where: { id }, select: { productId: true, product: { select: { categoryId: true } } } });
+  const ptcTeams = (await prisma.productTeamCapacity.findMany({ where: { productId: full!.productId, companyId: cid, capacityPerDay: { gt: 0 } }, select: { teamId: true } })).map(p => p.teamId);
+  const capable = ptcTeams.length > 0 ? ptcTeams : await getAvailableTeamsForCategory(full!.product.categoryId, cid);
+  if (!capable.includes(teamId)) return res.status(400).json({ error: "Эта бригада не делает этот товар — выберите бригаду из списка" });
 
   const before = await teamPlanSnapshot([teamId], from);
+  const undo = await captureSnapshot([teamId], from < today ? today : from, id);
   const placed = await placeItemOnTeam(id, teamId, from, { mode, planQty: gap, stamp: manualStamp(req) });
   await prisma.orderItem.update({ where: { id }, data: { offPlanQty: 0, offPlanAt: null, offPlanBy: null, offPlanTeamId: null } });
+  const undoId = await saveSnapshot(cid, undo);
+  // Позиция не встала (нет мощности) — план бригады возвращаем как был
+  const aggPlaced = await prisma.dailyTask.aggregate({ where: { orderItemId: id, actualQuantity: null }, _sum: { plannedQuantity: true } });
+  if ((aggPlaced._sum.plannedQuantity ?? 0) <= (agg._sum.plannedQuantity ?? 0)) {
+    await restoreSnapshot(cid, undoId);
+    return res.status(400).json({ error: "Не получилось поставить позицию: у бригады нет свободной мощности на этот товар" });
+  }
   const after = await teamPlanSnapshot([teamId], from);
   const cascade = { ...(await describeMove(before, after, from, id)), filled: true };
   const tasks = placed.length
@@ -2624,7 +2683,49 @@ app.post("/order-items/:id/return", async (req: Request, res: Response) => {
     lastDate: tasks[tasks.length - 1]?.date.toISOString().slice(0, 10) ?? null,
     teamId: tasks[0]?.teamId ?? null,
     cascade,
+    undoId,
   });
+});
+
+// «Отменить»: вернуть область ровно как была до действия, если с тех пор в ней ничего не меняли
+async function restoreSnapshot(companyId: string, snapId: string): Promise<{ ok: true; restored: number } | { ok: false; status: number; error: string }> {
+  const snap = await prisma.planSnapshot.findFirst({ where: { id: snapId, companyId } });
+  if (!snap) return { ok: false, status: 404, error: "Отменить уже нельзя" };
+  const teamIds = JSON.parse(snap.teamIds) as string[];
+  if (await scopeFingerprint(teamIds, snap.fromDate, snap.orderItemId) !== snap.fingerprint) {
+    return { ok: false, status: 409, error: "После этого график бригады уже меняли — отменить автоматически нельзя" };
+  }
+  type SnapTask = { orderItemId: string; teamId: string | null; date: string; plannedQuantity: number; loadShare: number | null; comment: string | null; manuallyPlaced: boolean; manualAt: string | null; manualBy: string | null };
+  const tasks = JSON.parse(snap.tasks) as SnapTask[];
+  const item = JSON.parse(snap.item) as { offPlanQty: number; offPlanAt: string | null; offPlanBy: string | null; offPlanTeamId: string | null; emptySlots: { teamId: string | null; date: string; createdAt: string; createdBy: string | null }[] };
+  await prisma.$transaction(async tx => {
+    await tx.dailyTask.deleteMany({ where: snapshotScope(teamIds, snap.fromDate, snap.orderItemId) });
+    for (const t of tasks) {
+      await tx.dailyTask.create({
+        data: {
+          orderItemId: t.orderItemId, teamId: t.teamId, date: new Date(t.date), plannedQuantity: t.plannedQuantity,
+          loadShare: t.loadShare, comment: t.comment, manuallyPlaced: t.manuallyPlaced,
+          manualAt: t.manualAt ? new Date(t.manualAt) : null, manualBy: t.manualBy,
+        },
+      });
+    }
+    await tx.orderItem.update({
+      where: { id: snap.orderItemId },
+      data: { offPlanQty: item.offPlanQty, offPlanAt: item.offPlanAt ? new Date(item.offPlanAt) : null, offPlanBy: item.offPlanBy, offPlanTeamId: item.offPlanTeamId },
+    });
+    await tx.emptySlot.deleteMany({ where: { orderItemId: snap.orderItemId } });
+    for (const sl of item.emptySlots) {
+      await tx.emptySlot.create({ data: { orderItemId: snap.orderItemId, teamId: sl.teamId, date: new Date(sl.date), createdAt: new Date(sl.createdAt), createdBy: sl.createdBy } });
+    }
+    await tx.planSnapshot.delete({ where: { id: snap.id } });
+  });
+  return { ok: true, restored: tasks.length };
+}
+
+app.post("/plan-snapshots/:id/restore", async (req: Request, res: Response) => {
+  const r = await restoreSnapshot(req.user!.companyId, String(req.params.id));
+  if (!r.ok) return res.status(r.status).json({ error: r.error });
+  res.json({ restored: r.restored });
 });
 
 app.get("/order-items/:id/remaining", async (req: Request, res: Response) => {
@@ -3021,11 +3122,17 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       const targetTeamId = data.teamId !== undefined ? data.teamId : current.teamId;
       const targetDate = data.date ?? current.date;
       if (!targetTeamId) return res.status(400).json({ error: "Для переноса позиции целиком нужна бригада" });
+      // Бригада должна делать этот товар — иначе позиция не встанет, а её задачи уже будут удалены
+      const oiProd = await prisma.orderItem.findUnique({ where: { id: current.orderItemId }, select: { productId: true, product: { select: { categoryId: true } }, order: { select: { companyId: true } } } });
+      const ptcTeams = (await prisma.productTeamCapacity.findMany({ where: { productId: oiProd!.productId, companyId: oiProd!.order.companyId, capacityPerDay: { gt: 0 } }, select: { teamId: true } })).map(p => p.teamId);
+      const capable = ptcTeams.length > 0 ? ptcTeams : await getAvailableTeamsForCategory(oiProd!.product.categoryId, oiProd!.order.companyId);
+      if (!capable.includes(targetTeamId)) return res.status(400).json({ error: "Эта бригада не делает этот товар — для переноса позиции целиком выберите бригаду с нормой" });
       const srcTeams = [...new Set(itemTasks.map(t => t.teamId).filter((t): t is string => !!t))];
       const srcFrom = itemTasks.reduce((m, t) => (t.date < m ? t.date : m), current.date);
       const teamIds = [...new Set([...srcTeams, targetTeamId])];
       const snapFrom = srcFrom < targetDate ? srcFrom : targetDate;
       const before = await teamPlanSnapshot(teamIds, snapFrom);
+      const undo = await captureSnapshot(teamIds, snapFrom, current.orderItemId);
       await prisma.dailyTask.deleteMany({ where: { id: { in: itemTasks.map(t => t.id) } } });
       const placed = await placeItemOnTeam(current.orderItemId, targetTeamId, targetDate, { mode: "date", planQty: qty, stamp: manualStamp(req) });
       if (fill) for (const t of srcTeams) await replanTeamFrom(t, srcFrom);
@@ -3035,7 +3142,14 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
       const load = await calculateTeamLoad(targetTeamId, targetDate);
       const cap = (await prisma.teamDayCapacity.findUnique({ where: { teamId_date: { teamId: targetTeamId, date: targetDate } } }))?.factor ?? 1;
       if (load > cap + 0.005) cascade = { ...cascade, overload: { load: Math.round(load * 100), capacity: Math.round(cap * 100) } };
-      return res.json({ id: placed[0] ?? null, wholeItem: true, qty, days: itemTasks.length, autoAdjust: true, cascade });
+      const undoId = await saveSnapshot(req.user!.companyId, undo);
+      // Встало меньше, чем снимали (нет мощности) — возвращаем всё как было
+      const placedAgg = await prisma.dailyTask.aggregate({ where: { orderItemId: current.orderItemId, actualQuantity: null }, _sum: { plannedQuantity: true } });
+      if ((placedAgg._sum.plannedQuantity ?? 0) < qty) {
+        await restoreSnapshot(req.user!.companyId, undoId);
+        return res.status(400).json({ error: "Не получилось перенести позицию целиком: у бригады нет свободной мощности на этот товар" });
+      }
+      return res.json({ id: placed[0] ?? null, wholeItem: true, qty, days: itemTasks.length, autoAdjust: true, cascade, undoId });
     }
 
     const include = {

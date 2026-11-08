@@ -184,7 +184,8 @@ export default function Schedule() {
 
 
   // Undo
-  type UndoAction = { label: string; fn: () => Promise<void> }
+  // fn может вернуть текст ошибки (например, отмена уже невозможна) — он показывается пользователю
+  type UndoAction = { label: string; fn: () => Promise<void | string> }
   const [undoAction, setUndoAction] = useState<UndoAction | null>(null)
 
   // Rollover result
@@ -575,6 +576,15 @@ export default function Schedule() {
     loadPlan()
   }
 
+  // «Отменить» через снимок плана на сервере: вернёт бригаду ровно как было, если с тех пор её не меняли
+  const snapshotUndo = (label: string, undoId: string | undefined): UndoAction | null => undoId ? {
+    label,
+    fn: async () => {
+      const { error: e } = await api.post(`/plan-snapshots/${undoId}/restore`, {})
+      return e
+    },
+  } : null
+
   // «Вернуть в график» из списка «Не в графике»: в очередь (FIFO) или с конкретной даты
   const openReturn = async (item: OffItem) => {
     setReturnDialog({ item, mode: 'fifo', date: todayISO(), teamId: item.offPlanTeamId ?? '' })
@@ -588,7 +598,7 @@ export default function Schedule() {
     if (!returnDialog) return
     const d = returnDialog
     setSaving(true)
-    const { data, error: e } = await api.post<{ qty: number; firstDate: string | null; lastDate: string | null; teamId: string | null; cascade: Cascade }>(
+    const { data, error: e } = await api.post<{ qty: number; firstDate: string | null; lastDate: string | null; teamId: string | null; cascade: Cascade; undoId?: string }>(
       `/order-items/${d.item.orderItemId}/return`,
       { mode: d.mode, teamId: d.teamId, ...(d.mode === 'date' ? { date: new Date(d.date).toISOString() } : {}) },
     )
@@ -604,7 +614,7 @@ export default function Schedule() {
       shifted: data?.cascade?.shifted ?? [], pulled: [], overload: null, mergedIntoOwn: false, filled: true,
       freedDate: first ?? d.date, targetDate: first ?? d.date,
     })
-    setUndoAction(null)
+    setUndoAction(snapshotUndo(`возврат ${d.item.orderNumber}`, data?.undoId))
     loadPlan()
   }
 
@@ -658,7 +668,7 @@ export default function Schedule() {
     const body: Record<string, unknown> = { fill: d.fill, ...(whole ? { wholeItem: true } : {}) }
     if (d.date !== d.fromDate) body.date = new Date(d.date).toISOString()
     if ((d.teamId || null) !== d.fromTeamId) body.teamId = d.teamId || null
-    const { data, error: e } = await api.put<{ id: string; cascade: Cascade | null }>(`/daily-tasks/${d.taskId}`, body)
+    const { data, error: e } = await api.put<{ id: string; cascade: Cascade | null; undoId?: string }>(`/daily-tasks/${d.taskId}`, body)
     setSaving(false)
     if (e) { setError(e); return }
     setMoveDialog(null)
@@ -666,8 +676,8 @@ export default function Schedule() {
     const row = rows.find(r => r.orderItemId === d.rowId)
     const where = [d.date !== d.fromDate ? `на ${formatDateShort(d.date)}` : '', (d.teamId || null) !== d.fromTeamId ? `в ${teamName(d.teamId || null)}` : ''].filter(Boolean).join(' ')
     showCascade(`${row?.orderNumber ?? ''} · ${whole ? `вся позиция, ${d.wholeQty} шт,` : `${d.qty} шт`} перенесены ${where}`, data?.cascade, d.fromDate, d.date)
-    // Позицию целиком назад одной кнопкой не вернуть (её дни могли быть в разных бригадах) — без «Отменить»
-    if (whole) { setUndoAction(null); loadPlan(); return }
+    // Позицию целиком возвращает снимок плана (её дни могли быть в разных бригадах)
+    if (whole) { setUndoAction(snapshotUndo(`перенос ${row?.orderNumber ?? 'позиции'}`, data?.undoId)); loadPlan(); return }
     const movedId = data?.id ?? d.taskId
     setUndoAction({
       label: `Вернуть на ${formatDateShort(d.fromDate)}`,
@@ -723,9 +733,10 @@ export default function Schedule() {
   const handleUndo = async () => {
     if (!undoAction) return
     setSaving(true)
-    await undoAction.fn()
+    const err = await undoAction.fn()
     setSaving(false)
     setUndoAction(null)
+    if (typeof err === 'string') setError(err)
     loadPlan()
   }
 
