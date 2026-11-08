@@ -105,6 +105,15 @@ const STATUS_BORDER: Record<string, string> = {
   'var(--plan-scheduled)': 'var(--plan-scheduled-border)',
 }
 
+// Режим «заполнять освободившееся место» при переносе — последний выбор пользователя в этом браузере
+const MOVE_FILL_KEY = 'schedule-move-fill'
+function loadMoveFill(): boolean {
+  try { return localStorage.getItem(MOVE_FILL_KEY) !== 'empty' } catch { return true }
+}
+function saveMoveFill(fill: boolean) {
+  try { localStorage.setItem(MOVE_FILL_KEY, fill ? 'fill' : 'empty') } catch { /* приватный режим */ }
+}
+
 export default function Schedule() {
   const today = todayISO()
   const [dateFrom, setDateFrom] = useState(today)
@@ -135,7 +144,8 @@ export default function Schedule() {
   const [mobileDate, setMobileDate] = useState(today)
   const [showActions, setShowActions] = useState(false)
   // Окно «Перенос задачи»: дата и бригада вводятся, а не выбираются кликом по клетке
-  type MoveDialog = { taskId: string; rowId: string; fromDate: string; fromTeamId: string | null; qty: number; manual: boolean; date: string; teamId: string }
+  // fill — занимать ли освободившееся место следующими задачами бригады (последний выбор помним)
+  type MoveDialog = { taskId: string; rowId: string; fromDate: string; fromTeamId: string | null; qty: number; manual: boolean; date: string; teamId: string; fill: boolean }
   const [moveDialog, setMoveDialog] = useState<MoveDialog | null>(null)
   const [moveTeams, setMoveTeams] = useState<{ teamId: string; teamName: string; perDay: number }[]>([])
   const [moveTargetLoad, setMoveTargetLoad] = useState<TeamLoad | null>(null)
@@ -145,6 +155,7 @@ export default function Schedule() {
     pulled: { orderNumber: string; product: string; qty: number; date: string }[]
     overload: { load: number; capacity: number } | null
     mergedIntoOwn: boolean
+    filled: boolean
   }
   type MoveResult = Cascade & { title: string; freedDate: string; targetDate: string }
   const [moveResult, setMoveResult] = useState<MoveResult | null>(null)
@@ -529,7 +540,7 @@ export default function Schedule() {
   const startMove = async () => {
     if (!popup?.cell) return
     const c = popup.cell
-    setMoveDialog({ taskId: c.taskId, rowId: popup.rowId, fromDate: popup.date, fromTeamId: c.teamId, qty: c.plannedQuantity, manual: c.manual, date: popup.date, teamId: c.teamId ?? '' })
+    setMoveDialog({ taskId: c.taskId, rowId: popup.rowId, fromDate: popup.date, fromTeamId: c.teamId, qty: c.plannedQuantity, manual: c.manual, date: popup.date, teamId: c.teamId ?? '', fill: loadMoveFill() })
     setMoveTargetLoad(null)
     setPopup(null)
     const { data } = await api.get<{ teamId: string; teamName: string; perDay: number }[]>(`/order-items/${popup.rowId}/teams`)
@@ -545,7 +556,7 @@ export default function Schedule() {
   }, [moveDialog?.teamId, moveDialog?.date])
 
   const showCascade = (title: string, cascade: Cascade | null | undefined, freedDate: string, targetDate: string) => {
-    setMoveResult({ title, shifted: cascade?.shifted ?? [], pulled: cascade?.pulled ?? [], overload: cascade?.overload ?? null, mergedIntoOwn: cascade?.mergedIntoOwn ?? false, freedDate, targetDate })
+    setMoveResult({ title, shifted: cascade?.shifted ?? [], pulled: cascade?.pulled ?? [], overload: cascade?.overload ?? null, mergedIntoOwn: cascade?.mergedIntoOwn ?? false, filled: cascade?.filled ?? true, freedDate, targetDate })
   }
 
   const submitMove = async () => {
@@ -553,7 +564,8 @@ export default function Schedule() {
     const d = moveDialog
     if (d.date === d.fromDate && (d.teamId || null) === d.fromTeamId) { setMoveDialog(null); return }
     setSaving(true)
-    const body: Record<string, unknown> = {}
+    saveMoveFill(d.fill)
+    const body: Record<string, unknown> = { fill: d.fill }
     if (d.date !== d.fromDate) body.date = new Date(d.date).toISOString()
     if ((d.teamId || null) !== d.fromTeamId) body.teamId = d.teamId || null
     const { data, error: e } = await api.put<{ id: string; cascade: Cascade | null }>(`/daily-tasks/${d.taskId}`, body)
@@ -567,7 +579,8 @@ export default function Schedule() {
     const movedId = data?.id ?? d.taskId
     setUndoAction({
       label: `Вернуть на ${formatDateShort(d.fromDate)}`,
-      fn: async () => { await api.put(`/daily-tasks/${movedId}`, { date: new Date(d.fromDate).toISOString(), teamId: d.fromTeamId, manuallyPlaced: d.manual }) },
+      // Возврат — в том же режиме: если место не заполняли, обратно тоже ничего не подтягиваем
+      fn: async () => { await api.put(`/daily-tasks/${movedId}`, { date: new Date(d.fromDate).toISOString(), teamId: d.fromTeamId, manuallyPlaced: d.manual, fill: d.fill }) },
     })
     loadPlan()
   }
@@ -1105,6 +1118,23 @@ export default function Schedule() {
                   </optgroup>
                 </select>
               </div>
+              <fieldset className="choice-group">
+                <legend>Освободившееся место {formatDateShort(d.fromDate)}</legend>
+                <label className={d.fill ? 'choice active' : 'choice'}>
+                  <input type="radio" name="move-fill" checked={d.fill} onChange={() => setMoveDialog({ ...d, fill: true })} />
+                  <span>
+                    <strong>Заполнить</strong>
+                    <small>Следующие задачи бригады сдвинутся раньше и займут место</small>
+                  </span>
+                </label>
+                <label className={!d.fill ? 'choice active' : 'choice'}>
+                  <input type="radio" name="move-fill" checked={!d.fill} onChange={() => setMoveDialog({ ...d, fill: false })} />
+                  <span>
+                    <strong>Оставить пустым</strong>
+                    <small>Остальные задачи останутся на своих днях — например, не готовы полуфабрикаты или бригада нужна под брак</small>
+                  </span>
+                </label>
+              </fieldset>
               {isOffDay(d.date) && <div className="move-note move-note-warn">Это нерабочий день — планировщик в него не планирует.</div>}
               {moveTargetLoad && !sameSlot && free !== null && (
                 <div className={share !== null && share > free + 0.005 ? 'move-note move-note-warn' : 'move-note'}>
@@ -1153,7 +1183,12 @@ export default function Schedule() {
                 {formatDateShort(moveResult.targetDate)} эта позиция и так в работе: перенесённое количество добавилось к ней, и план позиции пересчитан по очереди бригады.
               </div>
             )}
-            {moveResult.shifted.length === 0 && moveResult.pulled.length === 0 && !moveResult.overload && !moveResult.mergedIntoOwn && (
+            {!moveResult.filled && (
+              <div className="move-note" style={{ marginBottom: 12 }}>
+                Освободившееся место {formatDateShort(moveResult.freedDate)} оставлено пустым — остальные задачи бригады не подтягивались.
+              </div>
+            )}
+            {moveResult.filled && moveResult.shifted.length === 0 && moveResult.pulled.length === 0 && !moveResult.overload && !moveResult.mergedIntoOwn && (
               <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)' }}>Места хватило — другие задачи не сдвигались.</p>
             )}
             <div className="form-actions">

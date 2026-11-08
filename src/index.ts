@@ -531,15 +531,19 @@ async function plannedAheadQty(orderItemId: string, from: Date): Promise<number>
 // удлинение очереди), поэтому план бригады с этой даты собирается заново: автоматические задачи
 // удаляются и позиции планируются в порядке очереди на эту же бригаду. Ручные задачи, факт и всё,
 // что раньше from, не трогаются; уже стоящее в плане с сегодняшнего дня не дублируется.
-async function replanTeamFrom(teamId: string, from: Date): Promise<string[]> {
+// keepStarts — перенос «не заполняя освободившееся место»: позиция не может встать раньше, чем стояла
+// (её первый день с from — нижняя граница), поэтому задачи только сдвигаются вправо, а пустые дни остаются
+async function replanTeamFrom(teamId: string, from: Date, opts: { keepStarts?: boolean } = {}): Promise<string[]> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const start = from < today ? today : from;
   const auto = await prisma.dailyTask.findMany({
     where: { teamId, date: { gte: start }, actualQuantity: null, manuallyPlaced: false, plannedQuantity: { gt: 0 } },
-    select: { orderItemId: true },
+    select: { orderItemId: true, date: true },
   });
   const itemIds = [...new Set(auto.map(t => t.orderItemId))];
+  const firstDay = new Map<string, number>();
+  for (const t of auto) firstDay.set(t.orderItemId, Math.min(firstDay.get(t.orderItemId) ?? Infinity, t.date.getTime()));
   if (itemIds.length === 0) return [];
   await prisma.dailyTask.deleteMany({
     where: { teamId, date: { gte: start }, actualQuantity: null, manuallyPlaced: false, orderItemId: { in: itemIds } },
@@ -556,7 +560,8 @@ async function replanTeamFrom(teamId: string, from: Date): Promise<string[]> {
     const reservedQty = await plannedAheadQty(item.id, today);
     if (reservedQty >= item.quantity) continue;
     try {
-      await autoPlanOrderItem(item.id, { startDate: start, preferredTeamId: teamId, reservedQty });
+      const startDate = opts.keepStarts ? new Date(Math.max(start.getTime(), firstDay.get(item.id) ?? start.getTime())) : start;
+      await autoPlanOrderItem(item.id, { startDate, preferredTeamId: teamId, reservedQty });
     } catch { /* нет бригады с нормой — позиция останется незапланированной, как при общем перепланировании */ }
   }
   return itemIds;
@@ -606,7 +611,7 @@ async function describeMove(
     if (a?.byDay.has(fd) && !b?.byDay.has(fd)) pulled.push({ ...i, qty: a.byDay.get(fd)!, date: b ? day(b.first) : day(fd) });
   }
   shifted.sort((x, y) => x.prevDate.localeCompare(y.prevDate));
-  return { shifted, pulled, overload: null as { load: number; capacity: number } | null, mergedIntoOwn: false };
+  return { shifted, pulled, overload: null as { load: number; capacity: number } | null, mergedIntoOwn: false, filled: true };
 }
 
 // Helper: каскадный сдвиг вправо (после ручного переноса на раннюю дату)
@@ -2695,6 +2700,8 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
   const id = req.params.id;
   if (typeof id !== "string") return res.status(400).json({ error: "Invalid id" });
   const { plannedQuantity, teamId, date, manuallyPlaced } = req.body;
+  // Заполнять ли освободившееся место при переносе (по умолчанию да): false — очередь не подтягивается
+  const fill = req.body.fill !== false;
 
   const data: {
     plannedQuantity?: number;
@@ -2783,19 +2790,25 @@ app.put("/daily-tasks/:id", async (req: Request, res: Response) => {
 
     // Перенос (другая дата или бригада): план затронутых бригад пересобирается планировщиком с самого
     // раннего затронутого дня — лишнее в новом дне уходит дальше, освободившееся место занимает очередь.
-    // Делаем сразу (не в фоне), чтобы ответить, что сдвинулось и что встало на место задачи.
+    // fill: false — «не заполнять»: старая бригада не трогается, новая пересобирается с нового дня
+    // без сдвига задач раньше их дня (место остаётся пустым: полуфабрикаты не готовы, бригада нужна под
+    // другое). Делаем сразу (не в фоне), чтобы ответить, что сдвинулось и что встало на место задачи.
     let cascade: Awaited<ReturnType<typeof describeMove>> | null = null;
     if (dateChanged || teamChanged) {
       const minDate = (a: Date, b: Date) => (a < b ? a : b);
       const plans: { teamId: string; from: Date }[] = [];
-      if (task.teamId) plans.push({ teamId: task.teamId, from: task.teamId === current.teamId ? minDate(task.date, current.date) : task.date });
-      if (current.teamId && current.teamId !== task.teamId) plans.push({ teamId: current.teamId, from: current.date });
-      const from = plans.reduce((m, p) => minDate(m, p.from), task.date);
-      const teamIds = plans.map(p => p.teamId);
+      if (fill) {
+        if (task.teamId) plans.push({ teamId: task.teamId, from: task.teamId === current.teamId ? minDate(task.date, current.date) : task.date });
+        if (current.teamId && current.teamId !== task.teamId) plans.push({ teamId: current.teamId, from: current.date });
+      } else if (task.teamId) {
+        plans.push({ teamId: task.teamId, from: task.date });
+      }
+      const from = plans.reduce((m, p) => minDate(m, p.from), minDate(task.date, current.date));
+      const teamIds = [...new Set([...plans.map(p => p.teamId), ...(current.teamId ? [current.teamId] : [])])];
       const before = await teamPlanSnapshot(teamIds, from);
-      for (const p of plans) await replanTeamFrom(p.teamId, p.from);
+      for (const p of plans) await replanTeamFrom(p.teamId, p.from, { keepStarts: !fill });
       const after = await teamPlanSnapshot(teamIds, from);
-      cascade = { ...(await describeMove(before, after, current.date, current.orderItemId)), mergedIntoOwn };
+      cascade = { ...(await describeMove(before, after, current.date, current.orderItemId)), mergedIntoOwn, filled: fill };
       // День всё ещё перегружен — значит, там только ручные задачи (их пересборка не двигает): сообщаем
       if (task.teamId) {
         const load = await calculateTeamLoad(task.teamId, task.date);
