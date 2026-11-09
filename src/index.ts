@@ -1305,6 +1305,87 @@ async function recordSyncFact(orderItemId: string, qty: number, dateMs: number):
   });
 }
 
+type SyncMaterial = {
+  productCode: string; specCode?: string; specOutputQty?: number;
+  materialArticle?: string; materialCode?: string; materialName?: string; unit?: string;
+  materialKind?: string; materialFolder?: string; materialGroup?: string; stage?: string; qty: number;
+};
+const COMPONENT_FALLBACK_CATEGORY = "Комплектующие без группы";
+
+// Состав изделий из 1С. Хозяин — 1С: строки состава компании заменяются целиком.
+// Полуфабрикат — своя комплектующая: заводим её как Product (kind "component"), чтобы потом планировать
+// тем же движком, что и изделия; покупные материалы остаются только строками состава.
+async function syncBom(companyId: string, workshopId: string, materials: SyncMaterial[]) {
+  const stats = { bomLines: 0, bomComponents: 0, bomSkipped: 0 };
+  const products = await prisma.product.findMany({ where: { companyId }, select: { id: true, code: true } });
+  const productByCode = new Map(products.map(p => [p.code, p.id]));
+  const categoryByName = new Map<string, string>();
+  const categoryFor = async (name: string) => {
+    const known = categoryByName.get(name);
+    if (known) return known;
+    const cat = await prisma.productCategory.upsert({
+      where: { name_companyId: { name, companyId } },
+      update: {},
+      create: { name, companyId, capacityPerTeamPerDay: 0, workshopId },
+    });
+    categoryByName.set(name, cat.id);
+    return cat.id;
+  };
+
+  // Сначала заводим все свои комплектующие: полуфабрикат сам бывает изделием со своим составом (линейка LM-NANA),
+  // и его строки должны найти его уже в этом синке, а не в следующем
+  const codeOf = (m: SyncMaterial) => m.materialArticle?.trim() || m.materialCode?.trim() || "";
+  const isComponent = (m: SyncMaterial) => /^полуфабрикат/i.test(m.materialKind?.trim() ?? "");
+  for (const m of materials) {
+    const code = codeOf(m);
+    if (!code || !isComponent(m) || productByCode.has(code)) continue;
+    const categoryId = await categoryFor(m.materialGroup?.trim() || COMPONENT_FALLBACK_CATEGORY);
+    const p = await prisma.product.create({
+      data: { code, name: m.materialName?.trim() || code, categoryId, companyId, kind: "component" },
+    });
+    productByCode.set(code, p.id);
+    stats.bomComponents++;
+  }
+
+  const specOf = new Map<string, string>(); // productId → specCode: у изделия бывает две спецификации с одной датой
+  const lines = new Map<string, {
+    companyId: string; productId: string; componentProductId: string | null;
+    materialCode: string; materialName: string; unit: string; materialKind: string;
+    materialGroup: string | null; qtyPerUnit: number; specCode: string | null; stage: string | null;
+  }>();
+  for (const m of materials) {
+    const productId = productByCode.get(m.productCode?.trim());
+    const code = codeOf(m);
+    const specCode = m.specCode?.trim() || null;
+    if (!productId || !code || !(m.qty > 0)) { stats.bomSkipped++; continue; }
+    const seenSpec = specOf.get(productId);
+    if (seenSpec !== undefined && seenSpec !== (specCode ?? "")) { stats.bomSkipped++; continue; }
+    specOf.set(productId, specCode ?? "");
+
+    const kind = m.materialKind?.trim() ?? "";
+    const group = m.materialGroup?.trim() || null;
+    const componentProductId = isComponent(m) ? productByCode.get(code) ?? null : null;
+
+    // Спецификация бывает на 60 или 100000 шт — храним расход на 1 шт; материал на разных этапах складываем
+    const qtyPerUnit = m.qty / (m.specOutputQty && m.specOutputQty > 0 ? m.specOutputQty : 1);
+    const key = `${productId}|${code}`;
+    const prev = lines.get(key);
+    if (prev) { prev.qtyPerUnit += qtyPerUnit; continue; }
+    lines.set(key, {
+      companyId, productId, componentProductId,
+      materialCode: code, materialName: m.materialName?.trim() || code, unit: m.unit?.trim() ?? "",
+      materialKind: kind, materialGroup: group, qtyPerUnit, specCode, stage: m.stage?.trim() || null,
+    });
+  }
+
+  await prisma.$transaction([
+    prisma.bomLine.deleteMany({ where: { companyId } }),
+    prisma.bomLine.createMany({ data: Array.from(lines.values()) }),
+  ]);
+  stats.bomLines = lines.size;
+  return stats;
+}
+
 app.post("/sync/1c", async (req: Request, res: Response) => {
   const authHeader = req.headers["authorization"] as string | undefined;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -1318,16 +1399,17 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
   const companyId = syncCompany.id;
 
   // fact из 1С (остаток «Не обеспечен» по своему запросу) больше не используется — факт считается по позициям заказов
-  const { orders, categories, teams, teamCategories, capacity } = req.body as {
+  const { orders, categories, teams, teamCategories, capacity, materials } = req.body as {
     orders: { ref?: string; number: string; status?: string; customer: string; manager?: string; approvedAt?: string; description?: string; paymentTerms?: string; priority?: string; raytecDate?: string; productionInfo?: string; comment?: string; items: { productCode: string; productName: string; categoryName: string; quantity: number; transferDate?: string; barcode?: string }[] }[];
     categories: { code: string; name: string; capacity?: number }[];
     teams: { code: string; name: string; workshopName?: string; headcount?: number }[];
     teamCategories: { categoryName: string; teamName: string; workshopName?: string }[];
     fact: { orderNumber: string; productCode: string; remaining: number }[];
     capacity?: { productCode: string; productName?: string; categoryName?: string; teamName?: string; capacityPerDay: number }[];
+    materials?: SyncMaterial[]; // старая версия BSL не шлёт — состав не трогаем
   };
 
-  const stats = { categories: 0, teams: 0, products: 0, orders: 0, orderItems: 0, categoryTeamLinks: 0, factRecords: 0, capacityRecords: 0 };
+  const stats = { categories: 0, teams: 0, products: 0, orders: 0, orderItems: 0, categoryTeamLinks: 0, factRecords: 0, capacityRecords: 0, bomLines: 0, bomComponents: 0, bomSkipped: 0 };
   // Пропало сразу много заказов — скорее всего синк не из той базы: факт за весь синк не пишем
   let factGuard: string | null = null;
 
@@ -1337,11 +1419,13 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
     teams: teams?.length ?? 0,
     teamCategories: teamCategories?.length ?? 0,
     capacity: capacity?.length ?? 0,
+    materials: materials?.length ?? 0,
     sampleTeams: teams?.slice(0, 5).map(t => t.name),
     orderNumbers: orders?.map(o => o.number),
   });
-  // Полный дамп тела запроса — для отладки структуры данных от 1С
-  console.log("[sync/1c] raw body:", JSON.stringify(req.body, null, 2));
+  // Полный дамп тела запроса — для отладки структуры данных от 1С. Состав — десятки тысяч строк: в лог только образец
+  const { materials: _materials, ...rawBody } = req.body ?? {};
+  console.log("[sync/1c] raw body:", JSON.stringify({ ...rawBody, materialsSample: materials?.slice(0, 5) }, null, 2));
 
   let defaultWorkshop = await prisma.workshop.findFirst({ where: { name: "1С", companyId } });
   if (!defaultWorkshop) {
@@ -1625,6 +1709,11 @@ app.post("/sync/1c", async (req: Request, res: Response) => {
       });
       stats.capacityRecords += updated.count;
     }
+  }
+
+  if (materials) {
+    Object.assign(stats, await syncBom(companyId, defaultWorkshop.id, materials));
+    console.log(`[sync/1c] bom: ${stats.bomLines} строк, новых комплектующих ${stats.bomComponents}, пропущено ${stats.bomSkipped}`);
   }
 
   console.log(`[sync/1c] fact: ${stats.factRecords} записей${factGuard ? ` · ${factGuard}` : ""}`);
@@ -2152,6 +2241,39 @@ app.get("/products", async (req: Request, res: Response) => {
     orderBy: { code: "asc" },
   });
   res.json(products);
+});
+
+// Состав изделия: свои комплектующие первыми
+app.get("/bom", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const productId = String(req.query.productId ?? "");
+  if (!productId) { res.status(400).json({ error: "productId обязателен" }); return; }
+  const lines = await prisma.bomLine.findMany({
+    where: { companyId: cid, productId },
+    include: { component: { select: { id: true, code: true, name: true } } },
+    orderBy: [{ componentProductId: { sort: "asc", nulls: "last" } }, { materialName: "asc" }],
+  });
+  res.json(lines);
+});
+
+// Свои комплектующие из составов: где используются и настроены ли для планирования (бригады, норма)
+app.get("/bom/components", async (req: Request, res: Response) => {
+  const cid = req.user!.companyId;
+  const components = await prisma.product.findMany({
+    where: { companyId: cid, usedIn: { some: {} } },
+    select: {
+      id: true, code: true, name: true, kind: true, capacityPerDay: true,
+      category: { select: { id: true, name: true, _count: { select: { teams: true } } } },
+      _count: { select: { usedIn: true, teamCapacities: true } },
+    },
+    orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
+  });
+  res.json(components.map(c => ({
+    id: c.id, code: c.code, name: c.name, kind: c.kind,
+    category: { id: c.category.id, name: c.category.name },
+    usedInProducts: c._count.usedIn,
+    configured: c._count.teamCapacities > 0 || (c.capacityPerDay != null && c.category._count.teams > 0),
+  })));
 });
 
 app.post("/products", async (req: Request, res: Response) => {

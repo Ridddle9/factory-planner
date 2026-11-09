@@ -136,11 +136,14 @@ model Product {
   capacityPerDay Int?
   capacityLocked Boolean @default(false)
   barcode        String? // Штрихкод номенклатуры из 1С (РегистрСведений.ШтрихкодыНоменклатуры, МАКСИМУМ — как у Raytec)
+  kind           String  @default("product") // product | component — своя комплектующая (полуфабрикат), заведена из состава изделий
 
   category       ProductCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   company        Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
   orderItems     OrderItem[]
   teamCapacities ProductTeamCapacity[]
+  bomLines       BomLine[]            @relation("BomProduct")
+  usedIn         BomLine[]            @relation("BomComponent")
 
   @@unique([code, companyId])
 }
@@ -285,4 +288,28 @@ model PlanMove {
   undoneBy     String?
 
   @@index([companyId, createdAt])
+}
+
+// Состав изделия из 1С (РесурсныеСпецификации.МатериалыИУслуги). Хозяин — 1С: при синке состав компании
+// заменяется целиком. componentProductId — своя комплектующая (полуфабрикат), которую можно планировать;
+// у покупных материалов он пустой.
+model BomLine {
+  id                 String  @id @default(cuid())
+  companyId          String
+  productId          String
+  componentProductId String?
+  materialCode       String
+  materialName       String
+  unit               String
+  materialKind       String // ВидНоменклатуры: «Полуфабрикат», «Сырьё и материалы…»
+  materialGroup      String? // «Производственная группа» материала — семейство для массовой настройки
+  qtyPerUnit         Float // на 1 шт изделия: КоличествоУпаковок / ОсновноеИзделиеКоличествоУпаковок
+  specCode           String?
+  stage              String?
+
+  product   Product  @relation("BomProduct", fields: [productId], references: [id], onDelete: Cascade)
+  component Product? @relation("BomComponent", fields: [componentProductId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, productId])
+  @@index([componentProductId])
 }
