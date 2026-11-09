@@ -207,7 +207,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        client_max_body_size 50m;
+        client_max_body_size 200m;  # синк с составом изделий — десятки МБ; Express держит 200 МБ только для /sync/1c
     }
 
     # /api/* — стрипаем /api/ и пускаем в Express (как делал Vite proxy в dev)
