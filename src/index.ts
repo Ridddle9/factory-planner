@@ -38,7 +38,10 @@ const JWT_SECRET = process.env["JWT_SECRET"] ?? "dev-secret-change-in-production
 const PORT = parseInt(process.env["PORT"] ?? "3000", 10);
 const IS_PROD = process.env["NODE_ENV"] === "production";
 
-app.use(express.json({ limit: '50mb' }));
+// Синк из 1С с составом изделий весит десятки МБ — ему свой лимит, остальному API прежний
+const jsonDefault = express.json({ limit: '50mb' });
+const jsonSync = express.json({ limit: '200mb' });
+app.use((req, res, next) => (req.path === "/sync/1c" ? jsonSync : jsonDefault)(req, res, next));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
