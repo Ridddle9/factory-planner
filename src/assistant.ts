@@ -572,30 +572,75 @@ function makeTools(prisma: PrismaClient, cid: string) {
 
 // ─── Вызов модели ────────────────────────────────────────────────────────────
 
+// Ответ читается потоком (stream: true) и соединение закрываем сами, как только модель прислала finish_reason:
+// Yandex AI Studio бывает, что отдаёт ответ, но не закрывает соединение — без потока запрос висел до тайм-аута
 async function callModel(messages: ChatMessage[]): Promise<{ content: string | null; tool_calls?: ToolCall[] }> {
   const { base, key, folder, model } = config();
-  const res = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Api-Key ${key}`,
-      "OpenAI-Project": folder,
-    },
-    body: JSON.stringify({
-      model: `gpt://${folder}/${model}`,
-      messages,
-      tools: TOOLS,
-      temperature: 0.2,
-      max_tokens: 2000,
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Yandex AI Studio ${res.status}: ${text.slice(0, 500)}`);
-  const data = JSON.parse(text) as { choices?: { message?: { content: string | null; tool_calls?: ToolCall[] } }[] };
-  const msg = data.choices?.[0]?.message;
-  if (!msg) throw new Error(`Пустой ответ модели: ${text.slice(0, 300)}`);
-  return msg;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(new Error("The operation was aborted due to timeout")), 60000);
+  try {
+    const res = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Api-Key ${key}`,
+        "OpenAI-Project": folder,
+      },
+      body: JSON.stringify({
+        model: `gpt://${folder}/${model}`,
+        messages,
+        tools: TOOLS,
+        temperature: 0.2,
+        max_tokens: 2000,
+        stream: true,
+      }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`Yandex AI Studio ${res.status}: ${(await res.text()).slice(0, 500)}`);
+
+    type Delta = { content?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
+    type Chunk = { choices?: { delta?: Delta; finish_reason?: string | null }[]; error?: { message?: string } };
+    let content = "";
+    const calls: ToolCall[] = [];
+    let finished = false;
+    let buf = "";
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    while (!finished) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while (!finished && (nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") { finished = true; break; }
+        const chunk = JSON.parse(payload) as Chunk;
+        if (chunk.error) throw new Error(`Yandex AI Studio: ${chunk.error.message ?? payload.slice(0, 300)}`);
+        const choice = chunk.choices?.[0];
+        if (!choice) continue;
+        if (choice.delta?.content) content += choice.delta.content;
+        // Вызовы инструментов приходят кусками по index: id и имя — один раз, аргументы — дописываются
+        for (const tc of choice.delta?.tool_calls ?? []) {
+          const i = tc.index ?? calls.length;
+          const call = (calls[i] ??= { id: "", type: "function", function: { name: "", arguments: "" } });
+          if (tc.id) call.id = tc.id;
+          if (tc.function?.name) call.function.name = tc.function.name;
+          if (tc.function?.arguments) call.function.arguments += tc.function.arguments;
+        }
+        if (choice.finish_reason) finished = true;
+      }
+    }
+    // Ответ получен — соединение дальше не ждём
+    ctrl.abort();
+    const toolCalls = calls.filter(Boolean);
+    if (!finished && !content && toolCalls.length === 0) throw new Error("Пустой ответ модели");
+    return toolCalls.length ? { content: content || null, tool_calls: toolCalls } : { content };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function registerAssistant(app: Express, prisma: PrismaClient) {
